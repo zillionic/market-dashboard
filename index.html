@@ -258,6 +258,7 @@
 
       <div class="index-row" id="kr-index-row"></div>
       <div class="fx-line" id="kr-fx"></div>
+      <div class="fx-line" id="kr-breadth"></div>
 
       <div class="briefing briefing-top">
         <h3>시황</h3>
@@ -380,6 +381,7 @@
         { name:"KOSDAQ", value:"798.81",   delta:"▼0.36%", cls:"down-kr" },
       ],
       fx: "원/달러 환율 <span class=\"mono\">1,416.10원</span> (전일比 <span class=\"mono down-kr\">▼7.70원</span>)",
+      breadth: "등락 종목 비율 코스피 <span class=\"mono up-kr\">상승 554</span>:<span class=\"mono down-kr\">하락 322</span>(보합 36) · 코스닥 <span class=\"mono up-kr\">상승 808</span>:<span class=\"mono down-kr\">하락 829</span>(보합 84)",
       sectorsTop: [
         { name:"화학",       pct:4.37, reason:"S-Oil·한화솔루션·OCI홀딩스 등 정유·태양광 소재주 강세가 업종 전체를 견인" },
         { name:"음식료·담배", pct:3.34, reason:"반도체 조정 국면 속 대형지수 부진을 피한 방어주 순환매 유입" },
@@ -434,6 +436,7 @@
      시황 코멘트("briefing")과 업종별 "이유"는 여전히 수동(Claude 큐레이션)입니다.
      ============================================================ */
   const KR_SECTORS_API = "/api/kr-sectors"; // 같은 배포 안의 API이므로 상대경로 사용 (도메인 바뀌어도 그대로 작동)
+  const KR_BREADTH_API = "/api/kr-breadth";
   const US_INDICES_API = "/api/us-indices";
 
   function fmtNum(n, digits = 2){
@@ -491,6 +494,25 @@
       DATA.kr.briefingSource = `출처: 신한투자증권 강진혁(국내 시황, t.me/shStrategy) · 지수·업종 등락률은 KRX Open API 실시간 연동 (${kospiJson.basDd})`;
     } catch (err) {
       console.warn("국내 지수/업종 실시간 연동 실패, 스냅샷 값을 유지합니다:", err);
+    }
+
+    // ---- [국내 등락 종목 비율] KRX Open API 전종목 시세 (실제 연동됨) ----
+    try {
+      const res = await fetch(KR_BREADTH_API);
+      if (res.ok) {
+        const j = await res.json();
+        if (j.kospi && j.kosdaq) {
+          DATA.kr.breadth =
+            `등락 종목 비율 코스피 <span class="mono up-kr">상승 ${j.kospi.up}</span>:` +
+            `<span class="mono down-kr">하락 ${j.kospi.down}</span>(보합 ${j.kospi.flat}) · ` +
+            `코스닥 <span class="mono up-kr">상승 ${j.kosdaq.up}</span>:` +
+            `<span class="mono down-kr">하락 ${j.kosdaq.down}</span>(보합 ${j.kosdaq.flat})`;
+        }
+      } else {
+        console.warn("kr-breadth API 응답 실패:", res.status);
+      }
+    } catch (err) {
+      console.warn("국내 등락 종목 비율 실시간 연동 실패, 스냅샷 값을 유지합니다:", err);
     }
 
     // ---- [해외 지수] stooq.com (실제 연동됨, 무료·키 불필요) ----
@@ -608,6 +630,7 @@
 
     renderIndexRow("kr-index-row", DATA.kr.indices);
     document.getElementById("kr-fx").innerHTML = DATA.kr.fx;
+    document.getElementById("kr-breadth").innerHTML = DATA.kr.breadth;
     document.getElementById("kr-briefing-source").textContent = DATA.kr.briefingSource;
     document.getElementById("kr-briefing").innerHTML = DATA.kr.briefing;
     renderSectorSection("kr-sector-bars", "kr-sector-reasons", DATA.kr.sectorsTop, DATA.kr.sectorsBottom);
