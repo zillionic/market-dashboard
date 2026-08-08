@@ -182,6 +182,16 @@
   .bar-div.pos{ left:50%; background: var(--us-up); border-radius: 0 3px 3px 0; }
   .bar-div.neg{ right:50%; background: var(--us-down); border-radius: 3px 0 0 3px; }
 
+  .sectorlist{ margin-bottom: 4px; }
+  .sector-row{ padding: 9px 0; border-bottom: 1px solid var(--line-soft); }
+  .sector-row:last-child{ border-bottom: none; }
+  .sector-row .head{
+    display:flex; justify-content:space-between; align-items:baseline;
+    font-size: 13.5px; font-weight: 600; margin-bottom: 3px;
+  }
+  .sector-row .head .pct{ font-size: 12.5px; font-weight: 700; }
+  .sector-row .reason{ font-size: 12.5px; color: var(--ink-dim); line-height: 1.6; }
+
   .narrative{ font-size: 13.5px; line-height: 1.75; color: var(--ink-dim); }
   .narrative strong{ color: var(--ink); font-weight:600; }
 
@@ -257,16 +267,11 @@
 
       <div class="divider"></div>
 
-      <div class="sub">업종별 등락률 · 상승 테마</div>
-      <div class="tags" id="kr-up-tags"></div>
+      <div class="sub">업종 등락 TOP5 · BOTTOM5</div>
+      <div class="barlist" id="kr-sector-bars"></div>
 
-      <div class="sub">특징주 · 혼조</div>
-      <div class="tags" id="kr-mixed-tags"></div>
-
-      <div class="divider"></div>
-
-      <div class="sub">상승률 상위 종목</div>
-      <div class="barlist" id="kr-bars"></div>
+      <div class="sub" style="margin-top:16px;">업종별 시황</div>
+      <div class="sectorlist" id="kr-sector-reasons"></div>
     </section>
 
     <section class="panel">
@@ -286,8 +291,11 @@
 
       <div class="divider"></div>
 
-      <div class="sub">S&amp;P 500 업종별 등락률</div>
-      <div class="barlist" id="us-bars"></div>
+      <div class="sub">업종 등락 TOP5 · BOTTOM5</div>
+      <div class="barlist" id="us-sector-bars"></div>
+
+      <div class="sub" style="margin-top:16px;">업종별 시황</div>
+      <div class="sectorlist" id="us-sector-reasons"></div>
     </section>
 
   </main>
@@ -305,7 +313,7 @@
   /* ============================================================
      0. 설정
      ============================================================ */
-  const USE_LIVE_API = false;          // true로 바꾸면 fetchLiveData()가 DATA를 덮어씁니다.
+  const USE_LIVE_API = true;           // KRX 업종지수는 실제로 연동됨. false로 바꾸면 스냅샷(DATA) 값만 사용.
   const REQUIRE_PASSWORD = false;       // 현재 비활성화. 접근 제어는 추후 서버(Vercel Edge Middleware 등) 단에서 처리 예정.
   const TEAM_PASSWORD = "";             // 다시 켤 경우에만 사용됩니다.
 
@@ -372,17 +380,21 @@
         { name:"KOSDAQ", value:"798.81",   delta:"▼0.36%", cls:"down-kr" },
       ],
       fx: "원/달러 환율 <span class=\"mono\">1,416.10원</span> (전일比 <span class=\"mono down-kr\">▼7.70원</span>)",
-      upThemes: ["배터리(SK이노베이션·삼성SDI·LGES)","태양광(한화솔루션·OCI홀딩스)","방산·금융","바이오텍(알테오젠·리가켐)"],
-      mixedThemes: ["반도체 대형주 (삼성전자 +0.2% / SK하이닉스 -4.9%)"],
-      topMovers: [
-        { name:"엘앤에프",     pct:13.0 },
-        { name:"OCI홀딩스",    pct:11.7 },
-        { name:"한화솔루션",   pct:11.5 },
-        { name:"SK이노베이션", pct:10.8 },
-        { name:"S-Oil",       pct:10.2 },
-        { name:"삼성SDI",     pct:7.5 },
+      sectorsTop: [
+        { name:"화학",       pct:4.37, reason:"S-Oil·한화솔루션·OCI홀딩스 등 정유·태양광 소재주 강세가 업종 전체를 견인" },
+        { name:"음식료·담배", pct:3.34, reason:"반도체 조정 국면 속 대형지수 부진을 피한 방어주 순환매 유입" },
+        { name:"제약",       pct:2.27, reason:"알테오젠 대형 기술수출(L/O) 훈풍에 업종 전반 동반 강세" },
+        { name:"오락·문화",  pct:2.04, reason:"콘텐츠·엔터 관련주로 순환매 자금 유입" },
+        { name:"부동산",     pct:1.28, reason:"금리 하락 기대가 리츠 등 자산주에 소폭 반영" },
       ],
-      briefingSource: "출처: 신한투자증권 강진혁(국내 시황), t.me/shStrategy 08/07 마감시황",
+      sectorsBottom: [
+        { name:"증권",    pct:-2.41, reason:"코스피 조정 국면에 브로커리지 업종 차익실현 매물" },
+        { name:"건설",    pct:-2.07, reason:"대형 프로젝트 모멘텀 부재 속 매물 출회" },
+        { name:"보험",    pct:-1.79, reason:"금리 하락 기대에 따른 이차마진 우려" },
+        { name:"통신",    pct:-1.72, reason:"방어주 성격에도 순환매 자금이 성장주로 이동" },
+        { name:"IT 서비스", pct:-1.61, reason:"CLARITY Act 표결 9월 연기 소식에 가상자산 연계 종목 약세" },
+      ],
+      briefingSource: "출처: 신한투자증권 강진혁(국내 시황, t.me/shStrategy) · 업종 등락률은 KRX Open API 실시간 연동",
       briefing: "코스피 6,258.77(-0.60%)·코스닥 798.81(-0.36%), 7주 연속 하락 마감<br>연준 매파 발언·Alphabet 회사채 발행에 금리 부담 재부각, 美 고용보고서 관망세<br>반도체 숨고르기(삼성전자 +0.2%, SK하이닉스 -4.9%) 속 비반도체 장세, 상승 554개<br>배터리 강세 두드러짐(<strong>SK이노베이션 +10.8%</strong>, 삼성SDI +7.5%, 엘앤에프 +13.0%)<br>장마감 후 SK하이닉스 중간배당 공시에 반도체 시간외 반등"
     },
     us: {
@@ -392,41 +404,80 @@
         { name:"DOW",     value:"54,036.93", delta:"▲0.28%", cls:"up-us" },
       ],
       breadth: "등락 종목 비율 <span class=\"mono up-us\">상승 336</span> : <span class=\"mono down-us\">하락 167</span> (약 2:1, 고른 상승)",
-      sectors: [
-        { name:"소재",       pct:1.52 },
-        { name:"임의소비재", pct:1.34 },
-        { name:"정보기술",   pct:1.25 },
-        { name:"헬스케어",   pct:0.78 },
-        { name:"산업재",     pct:0.19 },
-        { name:"필수소비재", pct:0.01 },
-        { name:"금융",       pct:-0.32 },
-        { name:"에너지",     pct:-1.16 },
+      sectorsTop: [
+        { name:"소재(Basic Materials)", pct:1.71, reason:"금리 하락 기대에 금·은 등 귀금속 및 광산주 강세, 달러 약세도 우호적" },
+        { name:"기술(Technology)",      pct:0.63, reason:"소프트웨어 실적 호조에 반등, 대형 기술주 콜옵션 수급도 우호적" },
+        { name:"부동산(Real Estate)",   pct:0.60, reason:"국채금리 하락에 배당 매력 부각, REIT로 저가 매수세 유입" },
+        { name:"산업재(Industrials)",   pct:0.55, reason:"금리 인하 기대에 경기민감주 전반 순환매 유입" },
+        { name:"헬스케어(Healthcare)",  pct:0.44, reason:"개별 실적 호조 종목 중심 완만한 강세" },
+      ],
+      sectorsBottom: [
+        { name:"에너지(Energy)",                     pct:-0.30, reason:"고용 쇼크發 금리 하락 기대에도 호르무즈 해협 협상 진전 소식에 유가 재차 하락 전환" },
+        { name:"커뮤니케이션서비스(Comm. Services)", pct:-0.02, reason:"Alphabet 250억$ 회사채 발행 소식에 금리 부담 우려로 약보합" },
+        { name:"필수소비재(Consumer Defensive)",     pct:0.04,  reason:"경기방어 성격에도 성장주 랠리에 상대적으로 소외, 사실상 보합" },
+        { name:"금융(Financial)",                    pct:0.14,  reason:"국채금리 변동성 확대 속 대형 은행주 약보합" },
+        { name:"유틸리티(Utilities)",                pct:0.29,  reason:"장중 한때 강세였으나 위험선호 심리 회복에 방어주 매력 약화, 마감 직전 상승분 반납" },
       ],
       briefingSource: "출처: 사제콩이_서상영(미래에셋증권), t.me/ehdwl 08/07",
       briefing: "7월 비농업고용 -2.3만 건, 예상(+8만 건) 큰 폭 하회…5·6월도 10만 건+ 하향 수정<br>노동시장 냉각에도 침체보다 완만한 둔화로 해석, 9월 금리인상 기대 후퇴(CME 58%→42%)<br>국채금리·달러 하락 속 호르무즈 해협 협상 진전 소식까지 겹치며 상승폭 확대<br>S&amp;P500·나스닥 <strong>사상 최고치</strong>(다우 +0.28%, S&amp;P500 +0.62%, 나스닥 +1.30%, 필라델피아반도체 +2.56%)<br>메모리 스토리지주 약세 vs <strong>엔비디아·스페이스X·팔란티어</strong> 강세"
     },
-    sources: "출처: 국내 — 뉴스핌, 머니투데이, 비즈니스코리아, EBN / 해외 — S&P Dow Jones Indices, CNBC, STL.News, FactSet"
+    sources: "출처: 국내 — 신한투자증권(t.me/shStrategy) / 해외 시황 — 미래에셋증권(t.me/ehdwl) · 해외 업종 등락률 — Finviz.com Group Screener"
   };
 
   /* ============================================================
-     2. 실시간 API 연동 지점 (구조만 준비, 키 넣으면 활성화)
+     2. 실시간 API 연동 지점
+     -----------------------------------------------------------
+     [국내 업종 등락률] KRX Open API — /api/kr-sectors (Vercel 서버리스 함수)를
+     통해 실제로 연동되어 있습니다. USE_LIVE_API를 true로 켜면 페이지 로드 시
+     DATA.kr.sectorsTop / sectorsBottom의 name·pct 숫자를 최신 값으로 덮어씁니다.
+     단, "reason"(왜 올랐는지 한 줄 설명)은 KRX API에 없는 정보라 자동으로
+     채워지지 않습니다 — 업종명이 어제와 같으면 기존 reason을 그대로 쓰고,
+     새로 등장한 업종이면 안내 문구로 대체됩니다.
      ============================================================ */
+  const KR_SECTORS_API = "/api/kr-sectors"; // 같은 배포 안의 API이므로 상대경로 사용 (도메인 바뀌어도 그대로 작동)
+
   async function fetchLiveData(){
-    // 아래는 예시 구조입니다. 실제 사용 시 주석을 풀고 API/키를 채워주세요.
-    //
-    // [해외 지수] Twelve Data / Alpha Vantage 등
+    // ---- [국내 업종 등락률] KRX Open API (실제 연동됨) ----
+    try {
+      const res = await fetch(`${KR_SECTORS_API}?market=KOSPI`);
+      if (res.ok) {
+        const json = await res.json();
+        const prevReasons = {};
+        [...DATA.kr.sectorsTop, ...DATA.kr.sectorsBottom].forEach(s => { prevReasons[s.name] = s.reason; });
+
+        const mapRow = (r) => ({
+          name: r.name,
+          pct: r.pct,
+          reason: prevReasons[r.name] || "최신 KRX 데이터 반영 · 사유 요약은 다음 업데이트에서 채워집니다.",
+        });
+
+        if (Array.isArray(json.top5) && json.top5.length) {
+          DATA.kr.sectorsTop = json.top5.map(mapRow);
+        }
+        if (Array.isArray(json.bottom5) && json.bottom5.length) {
+          DATA.kr.sectorsBottom = json.bottom5.map(mapRow);
+        }
+        DATA.kr.briefingSource = `출처: 신한투자증권 강진혁(국내 시황, t.me/shStrategy) · 업종 등락률은 KRX Open API 실시간 연동 (${json.basDd})`;
+      } else {
+        console.warn("kr-sectors API 응답 실패:", res.status);
+      }
+    } catch (err) {
+      console.warn("kr-sectors 실시간 연동 실패, 스냅샷 값을 유지합니다:", err);
+    }
+
+    // ---- [해외 지수] Twelve Data / Alpha Vantage 등 (예시, 아직 미연동) ----
     // const KEY = "YOUR_API_KEY";
-    // const res = await fetch(`https://api.twelvedata.com/quote?symbol=SPX&apikey=${KEY}`);
-    // const json = await res.json();
-    // DATA.us.indices[0].value = Number(json.close).toLocaleString();
+    // const res2 = await fetch(`https://api.twelvedata.com/quote?symbol=SPX&apikey=${KEY}`);
+    // const json2 = await res2.json();
+    // DATA.us.indices[0].value = Number(json2.close).toLocaleString();
     //
-    // [국내 지수] 한국투자증권 OpenAPI (계좌+앱키 필요) 또는 KRX 정보데이터시스템
-    // 국내 지수·업종 데이터는 대부분 유료/인증 필요 API이므로,
-    // 사내에서 쓰는 시세 벤더(에프앤가이드, 인포맥스 등)가 있다면 그쪽 REST 엔드포인트를 붙이는 게 가장 빠릅니다.
-    //
-    // 데이터를 다 채운 뒤 마지막에 render()를 다시 호출하면 화면에 반영됩니다.
-    console.warn("fetchLiveData()가 아직 구현되지 않았습니다. USE_LIVE_API를 켜기 전에 이 함수를 채워주세요.");
+    // [해외 업종 등락률] Finviz — 공식 무료 API는 없음(Elite 구독형, finviz.com/elite).
+    // 브라우저에서 finviz.com/groups?g=sector&v=140 를 매일 열어서 옮기는 게 현재 방식.
+    // 자동화하려면 완전 무료 대안으로 섹터 ETF(XLB·XLK·XLRE·XLI·XLV·XLY·XLU·XLF·XLP·XLC·XLE) 일별 종가를
+    // stooq.com(키 불필요, CSV 다운로드) 또는 Yahoo Finance 차트 엔드포인트(비공식, 키 불필요)로 받아
+    // 전일 대비 등락률을 직접 계산하는 방법이 있습니다.
   }
+
 
   /* ============================================================
      3. 렌더링
@@ -483,6 +534,22 @@
     }).join("");
   }
 
+  function renderSectorSection(barsId, reasonsId, top5, bottom5){
+    const combined = [...top5, ...bottom5];
+    renderDivergingBars(barsId, combined);
+    document.getElementById(reasonsId).innerHTML = combined.map(d => {
+      const isPos = d.pct >= 0;
+      return `
+      <div class="sector-row">
+        <div class="head">
+          <span>${d.name}</span>
+          <span class="mono pct ${isPos ? 'up-us' : 'down-us'}">${isPos ? '+' : ''}${d.pct.toFixed(2)}%</span>
+        </div>
+        <div class="reason">${d.reason}</div>
+      </div>`;
+    }).join("");
+  }
+
   function render(){
     renderDateStatus();
     document.getElementById("updatedAt").textContent = DATA.updatedAt;
@@ -496,15 +563,13 @@
     document.getElementById("kr-fx").innerHTML = DATA.kr.fx;
     document.getElementById("kr-briefing-source").textContent = DATA.kr.briefingSource;
     document.getElementById("kr-briefing").innerHTML = DATA.kr.briefing;
-    renderTags("kr-up-tags", DATA.kr.upThemes, "up");
-    renderTags("kr-mixed-tags", DATA.kr.mixedThemes, "mixed");
-    renderSingleBars("kr-bars", DATA.kr.topMovers);
+    renderSectorSection("kr-sector-bars", "kr-sector-reasons", DATA.kr.sectorsTop, DATA.kr.sectorsBottom);
 
     renderIndexRow("us-index-row", DATA.us.indices);
     document.getElementById("us-breadth").innerHTML = DATA.us.breadth;
     document.getElementById("us-briefing-source").textContent = DATA.us.briefingSource;
     document.getElementById("us-briefing").innerHTML = DATA.us.briefing;
-    renderDivergingBars("us-bars", DATA.us.sectors);
+    renderSectorSection("us-sector-bars", "us-sector-reasons", DATA.us.sectorsTop, DATA.us.sectorsBottom);
 
     document.getElementById("footerNote").textContent = "데이터 기준: " + DATA.updatedAt;
     document.getElementById("footerSources").textContent = DATA.sources;
