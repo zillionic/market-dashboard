@@ -91,6 +91,16 @@ module.exports = async function handler(req, res) {
     const data = await krxRes.json();
     const rows = data.OutBlock_1 || [];
 
+    const compositeRow = rows.find((r) => r.IDX_NM && r.IDX_NM.trim() === (market === "KOSPI" ? "코스피" : "코스닥"));
+    const composite = compositeRow
+      ? {
+          name: compositeRow.IDX_NM.trim(),
+          close: Number(compositeRow.CLSPRC_IDX),
+          pct: Number(compositeRow.FLUC_RT),
+          change: Number(compositeRow.CMPPREVDD_IDX),
+        }
+      : null;
+
     const sectors = rows
       .filter((r) => r.IDX_NM && !isCompositeOrSizeIndex(r.IDX_NM))
       .map((r) => ({
@@ -110,6 +120,7 @@ module.exports = async function handler(req, res) {
     res.status(200).json({
       market,
       basDd,
+      composite,
       top5,
       bottom5,
       rawCount: sectors.length,
