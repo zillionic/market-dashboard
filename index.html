@@ -427,55 +427,102 @@
   /* ============================================================
      2. 실시간 API 연동 지점
      -----------------------------------------------------------
-     [국내 업종 등락률] KRX Open API — /api/kr-sectors (Vercel 서버리스 함수)를
-     통해 실제로 연동되어 있습니다. USE_LIVE_API를 true로 켜면 페이지 로드 시
-     DATA.kr.sectorsTop / sectorsBottom의 name·pct 숫자를 최신 값으로 덮어씁니다.
-     단, "reason"(왜 올랐는지 한 줄 설명)은 KRX API에 없는 정보라 자동으로
-     채워지지 않습니다 — 업종명이 어제와 같으면 기존 reason을 그대로 쓰고,
-     새로 등장한 업종이면 안내 문구로 대체됩니다.
+     [국내 지수·업종] KRX Open API — /api/kr-sectors
+     [해외 지수]      stooq.com (무료, 키 불필요) — /api/us-indices
+     둘 다 실제로 연동되어 있습니다. USE_LIVE_API를 true로 켜면 페이지 로드 시
+     지수 값과 업종 TOP5/BOTTOM5 숫자를 최신 값으로 덮어씁니다.
+     시황 코멘트("briefing")과 업종별 "이유"는 여전히 수동(Claude 큐레이션)입니다.
      ============================================================ */
   const KR_SECTORS_API = "/api/kr-sectors"; // 같은 배포 안의 API이므로 상대경로 사용 (도메인 바뀌어도 그대로 작동)
+  const US_INDICES_API = "/api/us-indices";
+
+  function fmtNum(n, digits = 2){
+    return n.toLocaleString("ko-KR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+  }
+  function fmtDelta(change, pct, arrowUpClass){
+    const isPos = pct >= 0;
+    const arrow = isPos ? "▲" : "▼";
+    const pctStr = `${arrow}${fmtNum(Math.abs(pct))}%`;                                  // 인덱스 카드용: ▲0.62%
+    const longStr = `${arrow}${fmtNum(Math.abs(change))} (${isPos ? "+" : ""}${fmtNum(pct)}%)`; // 티커용: ▲47.68 (+0.62%)
+    return { short: pctStr, long: longStr, cls: isPos ? arrowUpClass.up : arrowUpClass.down };
+  }
+
+  async function fetchKrMarket(market){
+    const res = await fetch(`${KR_SECTORS_API}?market=${market}`);
+    if (!res.ok) throw new Error(`kr-sectors(${market}) 응답 실패: ${res.status}`);
+    return res.json();
+  }
 
   async function fetchLiveData(){
-    // ---- [국내 업종 등락률] KRX Open API (실제 연동됨) ----
+    // ---- [국내 지수 + 업종 등락률] KRX Open API (실제 연동됨) ----
     try {
-      const res = await fetch(`${KR_SECTORS_API}?market=KOSPI`);
-      if (res.ok) {
-        const json = await res.json();
-        const prevReasons = {};
-        [...DATA.kr.sectorsTop, ...DATA.kr.sectorsBottom].forEach(s => { prevReasons[s.name] = s.reason; });
+      const [kospiJson, kosdaqJson] = await Promise.all([
+        fetchKrMarket("KOSPI"),
+        fetchKrMarket("KOSDAQ"),
+      ]);
 
-        const mapRow = (r) => ({
-          name: r.name,
-          pct: r.pct,
-          reason: prevReasons[r.name] || "최신 KRX 데이터 반영 · 사유 요약은 다음 업데이트에서 채워집니다.",
-        });
-
-        if (Array.isArray(json.top5) && json.top5.length) {
-          DATA.kr.sectorsTop = json.top5.map(mapRow);
-        }
-        if (Array.isArray(json.bottom5) && json.bottom5.length) {
-          DATA.kr.sectorsBottom = json.bottom5.map(mapRow);
-        }
-        DATA.kr.briefingSource = `출처: 신한투자증권 강진혁(국내 시황, t.me/shStrategy) · 업종 등락률은 KRX Open API 실시간 연동 (${json.basDd})`;
-      } else {
-        console.warn("kr-sectors API 응답 실패:", res.status);
+      // 코스피/코스닥 지수 카드 + 상단 티커 갱신
+      if (kospiJson.composite) {
+        const c = kospiJson.composite;
+        const d = fmtDelta(c.change, c.pct, { up: "up-kr", down: "down-kr" });
+        DATA.kr.indices[0] = { name: "KOSPI", value: fmtNum(c.close), delta: d.short, cls: d.cls };
+        const t = DATA.ticker.find(t => t.name === "KOSPI");
+        if (t) { t.value = fmtNum(c.close); t.delta = d.long; t.cls = d.cls; }
       }
+      if (kosdaqJson.composite) {
+        const c = kosdaqJson.composite;
+        const d = fmtDelta(c.change, c.pct, { up: "up-kr", down: "down-kr" });
+        DATA.kr.indices[1] = { name: "KOSDAQ", value: fmtNum(c.close), delta: d.short, cls: d.cls };
+        const t = DATA.ticker.find(t => t.name === "KOSDAQ");
+        if (t) { t.value = fmtNum(c.close); t.delta = d.long; t.cls = d.cls; }
+      }
+
+      // 업종 TOP5 / BOTTOM5 (기존 reason은 이름이 같으면 재사용)
+      const prevReasons = {};
+      [...DATA.kr.sectorsTop, ...DATA.kr.sectorsBottom].forEach(s => { prevReasons[s.name] = s.reason; });
+      const mapRow = (r) => ({
+        name: r.name,
+        pct: r.pct,
+        reason: prevReasons[r.name] || "최신 KRX 데이터 반영 · 사유 요약은 다음 업데이트에서 채워집니다.",
+      });
+      if (Array.isArray(kospiJson.top5) && kospiJson.top5.length) DATA.kr.sectorsTop = kospiJson.top5.map(mapRow);
+      if (Array.isArray(kospiJson.bottom5) && kospiJson.bottom5.length) DATA.kr.sectorsBottom = kospiJson.bottom5.map(mapRow);
+
+      DATA.kr.briefingSource = `출처: 신한투자증권 강진혁(국내 시황, t.me/shStrategy) · 지수·업종 등락률은 KRX Open API 실시간 연동 (${kospiJson.basDd})`;
     } catch (err) {
-      console.warn("kr-sectors 실시간 연동 실패, 스냅샷 값을 유지합니다:", err);
+      console.warn("국내 지수/업종 실시간 연동 실패, 스냅샷 값을 유지합니다:", err);
     }
 
-    // ---- [해외 지수] Twelve Data / Alpha Vantage 등 (예시, 아직 미연동) ----
-    // const KEY = "YOUR_API_KEY";
-    // const res2 = await fetch(`https://api.twelvedata.com/quote?symbol=SPX&apikey=${KEY}`);
-    // const json2 = await res2.json();
-    // DATA.us.indices[0].value = Number(json2.close).toLocaleString();
-    //
-    // [해외 업종 등락률] Finviz — 공식 무료 API는 없음(Elite 구독형, finviz.com/elite).
+    // ---- [해외 지수] stooq.com (실제 연동됨, 무료·키 불필요) ----
+    try {
+      const res = await fetch(US_INDICES_API);
+      if (res.ok) {
+        const json = await res.json();
+        const rows = [
+          { key: "sp500", name: "S&P 500" },
+          { key: "nasdaq", name: "NASDAQ" },
+          { key: "dow", name: "DOW" },
+        ];
+        rows.forEach(({ key, name }) => {
+          const r = json[key];
+          if (!r || !Number.isFinite(r.close) || !Number.isFinite(r.pct)) return;
+          const d = fmtDelta(r.change ?? 0, r.pct, { up: "up-us", down: "down-us" });
+          const idxEntry = DATA.us.indices.find(i => i.name === name);
+          if (idxEntry) { idxEntry.value = fmtNum(r.close); idxEntry.delta = d.short; idxEntry.cls = d.cls; }
+          const tEntry = DATA.ticker.find(t => t.name === name);
+          if (tEntry) { tEntry.value = fmtNum(r.close); tEntry.delta = d.long; tEntry.cls = d.cls; }
+        });
+      } else {
+        console.warn("us-indices API 응답 실패:", res.status);
+      }
+    } catch (err) {
+      console.warn("해외 지수 실시간 연동 실패, 스냅샷 값을 유지합니다:", err);
+    }
+
+    // ---- [해외 업종 등락률] Finviz — 공식 무료 API는 없음(Elite 구독형, finviz.com/elite). ----
     // 브라우저에서 finviz.com/groups?g=sector&v=140 를 매일 열어서 옮기는 게 현재 방식.
     // 자동화하려면 완전 무료 대안으로 섹터 ETF(XLB·XLK·XLRE·XLI·XLV·XLY·XLU·XLF·XLP·XLC·XLE) 일별 종가를
-    // stooq.com(키 불필요, CSV 다운로드) 또는 Yahoo Finance 차트 엔드포인트(비공식, 키 불필요)로 받아
-    // 전일 대비 등락률을 직접 계산하는 방법이 있습니다.
+    // stooq.com CSV로 받아 전일 대비 등락률을 직접 계산하는 방법이 있습니다 (us-indices.js와 같은 패턴).
   }
 
 
