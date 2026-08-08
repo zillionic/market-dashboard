@@ -257,7 +257,6 @@
       </div>
 
       <div class="index-row" id="kr-index-row"></div>
-      <div class="fx-line" id="kr-fx"></div>
       <div class="fx-line" id="kr-breadth"></div>
 
       <div class="briefing briefing-top">
@@ -381,7 +380,7 @@
         { name:"KOSDAQ", value:"798.81",   delta:"▼0.36%", cls:"down-kr" },
       ],
       fx: "원/달러 환율 <span class=\"mono\">1,416.10원</span> (전일比 <span class=\"mono down-kr\">▼7.70원</span>)",
-      breadth: "등락 종목 비율 코스피 <span class=\"mono up-kr\">상승 554</span>:<span class=\"mono down-kr\">하락 322</span>(보합 36) · 코스닥 <span class=\"mono up-kr\">상승 808</span>:<span class=\"mono down-kr\">하락 829</span>(보합 84)",
+      breadth: "등락 종목 비율 코스피 <span class=\"mono up-kr\">상승 554</span> : <span class=\"mono down-kr\">하락 322</span> · 코스닥 <span class=\"mono up-kr\">상승 808</span> : <span class=\"mono down-kr\">하락 829</span>",
       sectorsTop: [
         { name:"화학",       pct:4.37, reason:"S-Oil·한화솔루션·OCI홀딩스 등 정유·태양광 소재주 강세가 업종 전체를 견인" },
         { name:"음식료·담배", pct:3.34, reason:"반도체 조정 국면 속 대형지수 부진을 피한 방어주 순환매 유입" },
@@ -405,7 +404,7 @@
         { name:"NASDAQ",  value:"26,690.62", delta:"▲1.30%", cls:"up-us" },
         { name:"DOW",     value:"54,036.93", delta:"▲0.28%", cls:"up-us" },
       ],
-      breadth: "등락 종목 비율 <span class=\"mono up-us\">상승 336</span> : <span class=\"mono down-us\">하락 167</span> (약 2:1, 고른 상승)",
+      breadth: "등락 종목 비율 <span class=\"mono up-us\">상승 336</span> : <span class=\"mono down-us\">하락 167</span>",
       sectorsTop: [
         { name:"소재(Basic Materials)", pct:1.71, reason:"금리 하락 기대에 금·은 등 귀금속 및 광산주 강세, 달러 약세도 우호적" },
         { name:"기술(Technology)",      pct:0.63, reason:"소프트웨어 실적 호조에 반등, 대형 기술주 콜옵션 수급도 우호적" },
@@ -503,10 +502,10 @@
         const j = await res.json();
         if (j.kospi && j.kosdaq) {
           DATA.kr.breadth =
-            `등락 종목 비율 코스피 <span class="mono up-kr">상승 ${j.kospi.up}</span>:` +
-            `<span class="mono down-kr">하락 ${j.kospi.down}</span>(보합 ${j.kospi.flat}) · ` +
-            `코스닥 <span class="mono up-kr">상승 ${j.kosdaq.up}</span>:` +
-            `<span class="mono down-kr">하락 ${j.kosdaq.down}</span>(보합 ${j.kosdaq.flat})`;
+            `등락 종목 비율 코스피 <span class="mono up-kr">상승 ${j.kospi.up}</span> : ` +
+            `<span class="mono down-kr">하락 ${j.kospi.down}</span> · ` +
+            `코스닥 <span class="mono up-kr">상승 ${j.kosdaq.up}</span> : ` +
+            `<span class="mono down-kr">하락 ${j.kosdaq.down}</span>`;
         }
       } else {
         console.warn("kr-breadth API 응답 실패:", res.status);
@@ -629,7 +628,6 @@
     renderTicker();
 
     renderIndexRow("kr-index-row", DATA.kr.indices);
-    document.getElementById("kr-fx").innerHTML = DATA.kr.fx;
     document.getElementById("kr-breadth").innerHTML = DATA.kr.breadth;
     document.getElementById("kr-briefing-source").textContent = DATA.kr.briefingSource;
     document.getElementById("kr-briefing").innerHTML = DATA.kr.briefing;
