@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>일일 시장 브리핑 · 브라이트 운용팀</title>
+<link rel="stylesheet" as="style" crossorigin href="https://cdn.jsdelivr.net/gh/orioncactus/pretendard@v1.3.9/dist/web/static/pretendard.css">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --bg:#0a0c10;
+    --panel:#12151b;
+    --panel-2:#161a21;
+    --line:#242932;
+    --line-soft:#1c2028;
+    --ink:#e9ecf1;
+    --ink-dim:#8c93a3;
+    --ink-faint:#5a6070;
+    --gold:#c9a227;
+    --kr-up:#e0393e;
+    --kr-down:#3b7ddb;
+    --us-up:#2fa84f;
+    --us-down:#e0393e;
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{background:var(--bg); color:var(--ink); min-height:100%;}
+  body{
+    font-family:'Pretendard', -apple-system, sans-serif;
+    -webkit-font-smoothing:antialiased;
+    padding: 28px 16px 60px;
+  }
+  .mono{ font-family:'JetBrains Mono', monospace; }
+  .wrap{ max-width: 1120px; margin: 0 auto; }
+  a{ color: inherit; }
+
+  /* ---------- password gate ---------- */
+  #gate{
+    position:fixed; inset:0; background: var(--bg);
+    display:flex; align-items:center; justify-content:center;
+    z-index: 100; flex-direction:column; gap:16px;
+  }
+  #gate .box{
+    background: var(--panel); border:1px solid var(--line);
+    border-radius:10px; padding: 32px 28px; width: 320px; text-align:center;
+  }
+  #gate .eyebrow{ margin-bottom: 10px; }
+  #gate h2{ font-size:17px; margin-bottom:16px; font-weight:700; }
+  #gate input{
+    width:100%; padding:10px 12px; border-radius:6px; border:1px solid var(--line);
+    background: var(--panel-2); color:var(--ink); font-family:'Pretendard';
+    font-size:14px; margin-bottom:10px;
+  }
+  #gate button{
+    width:100%; padding:10px; border-radius:6px; border:none;
+    background: var(--gold); color:#141414; font-weight:700; font-size:14px; cursor:pointer;
+  }
+  #gate .err{ color: var(--kr-up); font-size:12.5px; min-height:16px; }
+  #gate .hint{ color: var(--ink-faint); font-size:11.5px; margin-top:4px; }
+  body.locked #app{ display:none; }
+  body.unlocked #gate{ display:none; }
+
+  /* ---------- masthead ---------- */
+  .masthead{
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 18px;
+    margin-bottom: 22px;
+    display:flex;
+    justify-content:space-between;
+    align-items:flex-end;
+    flex-wrap:wrap;
+    gap:10px;
+  }
+  .masthead h1{
+    font-size: 28px;
+    font-weight: 700;
+    letter-spacing: -0.02em;
+  }
+  .eyebrow{
+    font-family:'JetBrains Mono', monospace;
+    font-size: 11px;
+    letter-spacing: 0.16em;
+    color: var(--gold);
+    text-transform: uppercase;
+    display:block;
+    margin-bottom: 4px;
+  }
+  .masthead .meta{ text-align:right; }
+  .masthead .date{
+    font-family:'JetBrains Mono', monospace;
+    font-size: 13px;
+    color: var(--ink-dim);
+  }
+  .market-status{
+    font-size: 12px;
+    margin-top: 3px;
+  }
+  .market-status.open{ color: var(--ink-dim); }
+  .market-status.closed{ color: var(--gold); font-weight: 600; }
+  .badge{
+    display:inline-block; font-size:10.5px; padding:2px 8px; border-radius:999px;
+    margin-top:5px; font-family:'JetBrains Mono', monospace; letter-spacing:0.03em;
+  }
+  .badge.snapshot{ background: rgba(201,162,39,0.15); color: var(--gold); border:1px solid rgba(201,162,39,0.35); }
+  .badge.live{ background: rgba(47,168,79,0.15); color: var(--us-up); border:1px solid rgba(47,168,79,0.35); }
+
+  /* ---------- ticker ---------- */
+  .ticker{
+    display:flex;
+    overflow-x:auto;
+    border: 1px solid var(--line);
+    background: var(--panel);
+    border-radius: 8px;
+    margin-bottom: 26px;
+  }
+  .tick{
+    padding: 12px 20px;
+    border-right: 1px solid var(--line);
+    white-space: nowrap;
+    display:flex;
+    flex-direction:column;
+    gap:3px;
+    min-width: 148px;
+  }
+  .tick:last-child{ border-right:none; }
+  .tick .name{ font-size: 11px; color: var(--ink-faint); letter-spacing: 0.05em; }
+  .tick .val{ font-size: 15px; font-weight: 600; }
+  .tick .delta{ font-size: 12.5px; font-weight:500; }
+  .up-kr{ color: var(--kr-up); }
+  .down-kr{ color: var(--kr-down); }
+  .up-us{ color: var(--us-up); }
+  .down-us{ color: var(--us-down); }
+
+  /* ---------- grid ---------- */
+  .grid{ display:grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  @media (max-width: 860px){ .grid{ grid-template-columns: 1fr; } }
+
+  .panel{
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 22px;
+  }
+  .panel-head{ margin-bottom: 16px; padding-bottom: 14px; border-bottom: 1px solid var(--line-soft); }
+  .panel-head h2{ font-size: 19px; font-weight: 700; letter-spacing: -0.01em; }
+
+  .index-row{ display:flex; gap: 14px; margin-bottom: 14px; flex-wrap:wrap; }
+  .index-card{
+    flex:1; min-width:120px; background: var(--panel-2); border: 1px solid var(--line-soft);
+    border-radius: 8px; padding: 12px 14px;
+  }
+  .index-card .name{ font-size:12px; color:var(--ink-dim); margin-bottom:6px; }
+  .index-card .value{ font-size:22px; font-weight:700; letter-spacing:-0.01em; }
+  .index-card .delta{ font-size:13px; margin-top:3px; font-weight:600; }
+
+  .fx-line{ font-size: 13px; color: var(--ink-dim); margin-bottom: 16px; }
+  .fx-line .mono{ color: var(--ink); }
+
+  .divider{ height:1px; background: var(--line-soft); margin: 16px 0; }
+
+  .sub{ font-size: 12px; letter-spacing: 0.06em; color: var(--ink-faint); text-transform: uppercase; margin-bottom: 10px; }
+
+  .tags{ display:flex; flex-wrap:wrap; gap: 7px; margin-bottom: 16px; }
+  .tag{
+    font-size: 12.5px; padding: 5px 10px; border-radius: 999px;
+    border: 1px solid var(--line-soft); color: var(--ink); background: var(--panel-2);
+  }
+  .tag.up{ border-color: rgba(224,57,62,0.4); color:#ff8c8f; }
+  .tag.mixed{ border-color: rgba(140,147,163,0.4); color: var(--ink-dim); }
+
+  .barlist{ margin-bottom: 16px; }
+  .barrow{
+    display:grid; grid-template-columns: 96px 1fr 62px; align-items:center;
+    gap: 10px; padding: 6px 0; font-size: 13px;
+  }
+  .barrow .label{ color: var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .barrow .val{ text-align:right; font-size:12.5px; font-weight:600; }
+
+  .barbase{ position:relative; height: 8px; background: var(--line-soft); border-radius: 3px; overflow:hidden; }
+  .bar-single{ position:absolute; top:0; left:0; height:100%; background: var(--kr-up); border-radius: 3px; }
+  .barbase-div{ position:relative; height: 8px; border-radius: 3px; }
+  .div-center{ position:absolute; left:50%; top:-3px; bottom:-3px; width:1px; background: var(--line); }
+  .bar-div{ position:absolute; top:0; height:100%; }
+  .bar-div.pos{ left:50%; background: var(--us-up); border-radius: 0 3px 3px 0; }
+  .bar-div.neg{ right:50%; background: var(--us-down); border-radius: 3px 0 0 3px; }
+
+  .narrative{ font-size: 13.5px; line-height: 1.75; color: var(--ink-dim); }
+  .narrative strong{ color: var(--ink); font-weight:600; }
+
+  .briefing{ margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
+  .briefing.briefing-top{ margin-top: 16px; padding-top: 0; border-top: none; }
+  .briefing h3{
+    font-size: 14px; font-weight: 700; margin-bottom: 8px;
+    display:flex; align-items:center; gap:6px;
+  }
+  .briefing h3::before{ content:"◆"; color: var(--gold); font-size: 11px; }
+  .briefing .source-tag{
+    font-size: 10.5px; color: var(--ink-faint); margin-bottom: 10px;
+    font-family:'JetBrains Mono', monospace;
+  }
+  .briefing p{ font-size: 13.5px; line-height: 1.95; color: var(--ink-dim); }
+  .briefing p strong{ color: var(--ink); font-weight:600; }
+
+  footer{
+    margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--line);
+    font-size: 12px; color: var(--ink-faint); line-height:1.8;
+  }
+  footer .note{ color: var(--gold); }
+</style>
+</head>
+<body class="locked">
+
+<!-- 팀 내부용 간단 접근 제어 (완전한 보안은 아니며, 캐주얼 접근 차단용입니다) -->
+<div id="gate">
+  <div class="box">
+    <span class="eyebrow">Bright AM · Ops Team</span>
+    <h2>운용팀 전용 대시보드</h2>
+    <input type="password" id="pw" placeholder="비밀번호">
+    <button onclick="tryUnlock()">입장</button>
+    <div class="err" id="pwErr"></div>
+    <div class="hint">배포 전 TEAM_PASSWORD 값을 팀 내부 비밀번호로 교체하세요.</div>
+  </div>
+</div>
+
+<div id="app">
+<div class="wrap">
+
+  <header class="masthead">
+    <div>
+      <span class="eyebrow">Daily Market Brief</span>
+      <h1>시황 대시보드 · 국내 &amp; 미국</h1>
+    </div>
+    <div class="meta">
+      <div class="date" id="todayDate">-</div>
+      <div class="market-status" id="marketStatus"></div>
+      <div class="date" id="updatedAt" style="margin-top:4px;">-</div>
+      <span class="badge" id="modeBadge">-</span>
+    </div>
+  </header>
+
+  <section class="ticker" id="ticker"></section>
+
+  <main class="grid">
+
+    <section class="panel">
+      <div class="panel-head">
+        <span class="eyebrow">Korea</span>
+        <h2>코스피 · 코스닥</h2>
+      </div>
+
+      <div class="index-row" id="kr-index-row"></div>
+      <div class="fx-line" id="kr-fx"></div>
+
+      <div class="briefing briefing-top">
+        <h3>시황</h3>
+        <div class="source-tag" id="kr-briefing-source"></div>
+        <p id="kr-briefing"></p>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="sub">업종별 등락률 · 상승 테마</div>
+      <div class="tags" id="kr-up-tags"></div>
+
+      <div class="sub">특징주 · 혼조</div>
+      <div class="tags" id="kr-mixed-tags"></div>
+
+      <div class="divider"></div>
+
+      <div class="sub">상승률 상위 종목</div>
+      <div class="barlist" id="kr-bars"></div>
+    </section>
+
+    <section class="panel">
+      <div class="panel-head">
+        <span class="eyebrow">United States</span>
+        <h2>S&amp;P 500 · NASDAQ · DOW</h2>
+      </div>
+
+      <div class="index-row" id="us-index-row"></div>
+      <div class="fx-line" id="us-breadth"></div>
+
+      <div class="briefing briefing-top">
+        <h3>시황</h3>
+        <div class="source-tag" id="us-briefing-source"></div>
+        <p id="us-briefing"></p>
+      </div>
+
+      <div class="divider"></div>
+
+      <div class="sub">S&amp;P 500 업종별 등락률</div>
+      <div class="barlist" id="us-bars"></div>
+    </section>
+
+  </main>
+
+  <footer>
+    <p class="note" id="footerNote"></p>
+    <p id="footerSources"></p>
+    <p>※ 이 페이지는 정적 파일입니다. 매일 아침 DATA 블록만 교체해서 재배포하면 최신 시황이 반영됩니다. 실시간 연동은 USE_LIVE_API를 켜고 fetchLiveData()를 채우면 됩니다.</p>
+  </footer>
+
+</div>
+</div>
+
+<script>
+  /* ============================================================
+     0. 설정
+     ============================================================ */
+  const USE_LIVE_API = false;          // true로 바꾸면 fetchLiveData()가 DATA를 덮어씁니다.
+  const REQUIRE_PASSWORD = false;       // 현재 비활성화. 접근 제어는 추후 서버(Vercel Edge Middleware 등) 단에서 처리 예정.
+  const TEAM_PASSWORD = "";             // 다시 켤 경우에만 사용됩니다.
+
+  /* ============================================================
+     0-1. 갱신 원칙
+     -----------------------------------------------------------
+     - 거래일 아침: DATA 블록을 그날 마감(또는 최신) 시황으로 교체합니다.
+     - 주말·공휴일: DATA는 직전 거래일 값을 그대로 유지합니다.
+       화면 상단에는 오늘 날짜가 자동으로 표시되고, 휴장일이면
+       "휴장" 배지 + "최근 거래일 데이터 표시 중" 안내가 함께 뜹니다.
+     - 공휴일은 한국 증시 기준으로 KR_HOLIDAYS 배열에 날짜만 추가하면
+       자동 반영됩니다(주말은 별도 추가 없이 자동 판별).
+     ============================================================ */
+  const KR_HOLIDAYS = [
+    // 'YYYY-MM-DD' 형식으로 추가. 예: "2026-09-24" (추석)
+  ];
+
+  function isMarketHoliday(date){
+    const day = date.getDay(); // 0=일, 6=토
+    if(day === 0 || day === 6) return true;
+    const iso = date.toISOString().slice(0,10);
+    return KR_HOLIDAYS.includes(iso);
+  }
+
+  function formatKoreanDate(date){
+    const dow = ['일','월','화','수','목','금','토'];
+    const y = date.getFullYear();
+    const m = String(date.getMonth()+1).padStart(2,'0');
+    const d = String(date.getDate()).padStart(2,'0');
+    return `${y}.${m}.${d} (${dow[date.getDay()]})`;
+  }
+
+  function renderDateStatus(){
+    const today = new Date();
+    document.getElementById("todayDate").textContent = formatKoreanDate(today) + " 접속";
+    const statusEl = document.getElementById("marketStatus");
+    if(isMarketHoliday(today)){
+      statusEl.textContent = "휴장 · 최근 거래일 데이터 표시 중";
+      statusEl.className = "market-status closed";
+    } else {
+      statusEl.textContent = "정규장 거래일";
+      statusEl.className = "market-status open";
+    }
+  }
+
+  /* ============================================================
+     1. 일일 스냅샷 데이터
+     -> 매일 아침 이 블록만 최신 시황으로 교체하고 다시 배포하면 됩니다.
+     -> Claude에게 "오늘자 시황으로 DATA 갱신해줘"라고 요청하면 이 블록만 바꿔드립니다.
+     ============================================================ */
+  const DATA = {
+    updatedAt: "2026-08-07 15:30 KST · 국내·미국 정규장 마감 기준",
+    ticker: [
+      { name:"KOSPI",   value:"6,258.77",   delta:"▼37.61 (-0.60%)", cls:"down-kr" },
+      { name:"KOSDAQ",  value:"798.81",     delta:"▼2.86 (-0.36%)",  cls:"down-kr" },
+      { name:"USD/KRW", value:"1,416.10",   delta:"▼7.70원",         cls:"down-kr" },
+      { name:"S&P 500", value:"7,757.64",   delta:"▲47.68 (+0.62%)", cls:"up-us" },
+      { name:"NASDAQ",  value:"26,690.62",  delta:"▲342.27 (+1.30%)",cls:"up-us" },
+      { name:"DOW",     value:"54,036.93",  delta:"▲151.83 (+0.28%)",cls:"up-us" },
+    ],
+    kr: {
+      indices: [
+        { name:"KOSPI",  value:"6,258.77", delta:"▼0.60%", cls:"down-kr" },
+        { name:"KOSDAQ", value:"798.81",   delta:"▼0.36%", cls:"down-kr" },
+      ],
+      fx: "원/달러 환율 <span class=\"mono\">1,416.10원</span> (전일比 <span class=\"mono down-kr\">▼7.70원</span>)",
+      upThemes: ["배터리(SK이노베이션·삼성SDI·LGES)","태양광(한화솔루션·OCI홀딩스)","방산·금융","바이오텍(알테오젠·리가켐)"],
+      mixedThemes: ["반도체 대형주 (삼성전자 +0.2% / SK하이닉스 -4.9%)"],
+      topMovers: [
+        { name:"엘앤에프",     pct:13.0 },
+        { name:"OCI홀딩스",    pct:11.7 },
+        { name:"한화솔루션",   pct:11.5 },
+        { name:"SK이노베이션", pct:10.8 },
+        { name:"S-Oil",       pct:10.2 },
+        { name:"삼성SDI",     pct:7.5 },
+      ],
+      briefingSource: "출처: 신한투자증권 강진혁(국내 시황), t.me/shStrategy 08/07 마감시황",
+      briefing: "코스피 6,258.77(-0.60%)·코스닥 798.81(-0.36%), 7주 연속 하락 마감<br>연준 매파 발언·Alphabet 회사채 발행에 금리 부담 재부각, 美 고용보고서 관망세<br>반도체 숨고르기(삼성전자 +0.2%, SK하이닉스 -4.9%) 속 비반도체 장세, 상승 554개<br>배터리 강세 두드러짐(<strong>SK이노베이션 +10.8%</strong>, 삼성SDI +7.5%, 엘앤에프 +13.0%)<br>장마감 후 SK하이닉스 중간배당 공시에 반도체 시간외 반등"
+    },
+    us: {
+      indices: [
+        { name:"S&P 500", value:"7,757.64",  delta:"▲0.62%", cls:"up-us" },
+        { name:"NASDAQ",  value:"26,690.62", delta:"▲1.30%", cls:"up-us" },
+        { name:"DOW",     value:"54,036.93", delta:"▲0.28%", cls:"up-us" },
+      ],
+      breadth: "등락 종목 비율 <span class=\"mono up-us\">상승 336</span> : <span class=\"mono down-us\">하락 167</span> (약 2:1, 고른 상승)",
+      sectors: [
+        { name:"소재",       pct:1.52 },
+        { name:"임의소비재", pct:1.34 },
+        { name:"정보기술",   pct:1.25 },
+        { name:"헬스케어",   pct:0.78 },
+        { name:"산업재",     pct:0.19 },
+        { name:"필수소비재", pct:0.01 },
+        { name:"금융",       pct:-0.32 },
+        { name:"에너지",     pct:-1.16 },
+      ],
+      briefingSource: "출처: 사제콩이_서상영(미래에셋증권), t.me/ehdwl 08/07",
+      briefing: "7월 비농업고용 -2.3만 건, 예상(+8만 건) 큰 폭 하회…5·6월도 10만 건+ 하향 수정<br>노동시장 냉각에도 침체보다 완만한 둔화로 해석, 9월 금리인상 기대 후퇴(CME 58%→42%)<br>국채금리·달러 하락 속 호르무즈 해협 협상 진전 소식까지 겹치며 상승폭 확대<br>S&amp;P500·나스닥 <strong>사상 최고치</strong>(다우 +0.28%, S&amp;P500 +0.62%, 나스닥 +1.30%, 필라델피아반도체 +2.56%)<br>메모리 스토리지주 약세 vs <strong>엔비디아·스페이스X·팔란티어</strong> 강세"
+    },
+    sources: "출처: 국내 — 뉴스핌, 머니투데이, 비즈니스코리아, EBN / 해외 — S&P Dow Jones Indices, CNBC, STL.News, FactSet"
+  };
+
+  /* ============================================================
+     2. 실시간 API 연동 지점 (구조만 준비, 키 넣으면 활성화)
+     ============================================================ */
+  async function fetchLiveData(){
+    // 아래는 예시 구조입니다. 실제 사용 시 주석을 풀고 API/키를 채워주세요.
+    //
+    // [해외 지수] Twelve Data / Alpha Vantage 등
+    // const KEY = "YOUR_API_KEY";
+    // const res = await fetch(`https://api.twelvedata.com/quote?symbol=SPX&apikey=${KEY}`);
+    // const json = await res.json();
+    // DATA.us.indices[0].value = Number(json.close).toLocaleString();
+    //
+    // [국내 지수] 한국투자증권 OpenAPI (계좌+앱키 필요) 또는 KRX 정보데이터시스템
+    // 국내 지수·업종 데이터는 대부분 유료/인증 필요 API이므로,
+    // 사내에서 쓰는 시세 벤더(에프앤가이드, 인포맥스 등)가 있다면 그쪽 REST 엔드포인트를 붙이는 게 가장 빠릅니다.
+    //
+    // 데이터를 다 채운 뒤 마지막에 render()를 다시 호출하면 화면에 반영됩니다.
+    console.warn("fetchLiveData()가 아직 구현되지 않았습니다. USE_LIVE_API를 켜기 전에 이 함수를 채워주세요.");
+  }
+
+  /* ============================================================
+     3. 렌더링
+     ============================================================ */
+  function renderTicker(){
+    document.getElementById("ticker").innerHTML = DATA.ticker.map(t => `
+      <div class="tick">
+        <span class="name">${t.name}</span>
+        <span class="val mono">${t.value}</span>
+        <span class="delta mono ${t.cls}">${t.delta}</span>
+      </div>
+    `).join("");
+  }
+
+  function renderIndexRow(elId, indices){
+    document.getElementById(elId).innerHTML = indices.map(i => `
+      <div class="index-card">
+        <div class="name">${i.name}</div>
+        <div class="value mono">${i.value}</div>
+        <div class="delta mono ${i.cls}">${i.delta}</div>
+      </div>
+    `).join("");
+  }
+
+  function renderTags(elId, items, cls){
+    document.getElementById(elId).innerHTML = items.map(t => `<span class="tag ${cls}">${t}</span>`).join("");
+  }
+
+  function renderSingleBars(elId, data){
+    const max = Math.max(...data.map(d => Math.abs(d.pct)));
+    document.getElementById(elId).innerHTML = data.map(d => `
+      <div class="barrow">
+        <div class="label">${d.name}</div>
+        <div class="barbase"><div class="bar-single" style="width:${(Math.abs(d.pct)/max*100).toFixed(1)}%"></div></div>
+        <div class="val mono up-kr">+${d.pct.toFixed(2)}%</div>
+      </div>
+    `).join("");
+  }
+
+  function renderDivergingBars(elId, data){
+    const max = Math.max(...data.map(d => Math.abs(d.pct)));
+    document.getElementById(elId).innerHTML = data.map(d => {
+      const w = (Math.abs(d.pct)/max*50).toFixed(1);
+      const isPos = d.pct >= 0;
+      return `
+      <div class="barrow">
+        <div class="label">${d.name}</div>
+        <div class="barbase-div">
+          <div class="div-center"></div>
+          <div class="bar-div ${isPos ? 'pos' : 'neg'}" style="width:${w}%"></div>
+        </div>
+        <div class="val mono ${isPos ? 'up-us' : 'down-us'}">${isPos ? '+' : ''}${d.pct.toFixed(2)}%</div>
+      </div>`;
+    }).join("");
+  }
+
+  function render(){
+    renderDateStatus();
+    document.getElementById("updatedAt").textContent = DATA.updatedAt;
+    const badge = document.getElementById("modeBadge");
+    badge.textContent = USE_LIVE_API ? "LIVE" : "SNAPSHOT";
+    badge.className = "badge " + (USE_LIVE_API ? "live" : "snapshot");
+
+    renderTicker();
+
+    renderIndexRow("kr-index-row", DATA.kr.indices);
+    document.getElementById("kr-fx").innerHTML = DATA.kr.fx;
+    document.getElementById("kr-briefing-source").textContent = DATA.kr.briefingSource;
+    document.getElementById("kr-briefing").innerHTML = DATA.kr.briefing;
+    renderTags("kr-up-tags", DATA.kr.upThemes, "up");
+    renderTags("kr-mixed-tags", DATA.kr.mixedThemes, "mixed");
+    renderSingleBars("kr-bars", DATA.kr.topMovers);
+
+    renderIndexRow("us-index-row", DATA.us.indices);
+    document.getElementById("us-breadth").innerHTML = DATA.us.breadth;
+    document.getElementById("us-briefing-source").textContent = DATA.us.briefingSource;
+    document.getElementById("us-briefing").innerHTML = DATA.us.briefing;
+    renderDivergingBars("us-bars", DATA.us.sectors);
+
+    document.getElementById("footerNote").textContent = "데이터 기준: " + DATA.updatedAt;
+    document.getElementById("footerSources").textContent = DATA.sources;
+  }
+
+  /* ============================================================
+     4. 접근 제어 (간단한 클라이언트 측 게이트, 세션 유지 없음)
+     ============================================================ */
+  function tryUnlock(){
+    const val = document.getElementById("pw").value;
+    if(val === TEAM_PASSWORD){
+      document.body.classList.remove("locked");
+      document.body.classList.add("unlocked");
+    } else {
+      document.getElementById("pwErr").textContent = "비밀번호가 올바르지 않습니다.";
+    }
+  }
+  document.getElementById("pw")?.addEventListener("keydown", e => { if(e.key === "Enter") tryUnlock(); });
+
+  /* ============================================================
+     5. 초기 실행
+     ============================================================ */
+  (async function init(){
+    if(!REQUIRE_PASSWORD){
+      document.body.classList.remove("locked");
+      document.body.classList.add("unlocked");
+    }
+    if(USE_LIVE_API){ await fetchLiveData(); }
+    render();
+  })();
+</script>
+
+</body>
+</html>
