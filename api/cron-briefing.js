@@ -103,6 +103,20 @@ function isWeekendKST() {
 }
 
 module.exports = async function handler(req, res) {
+  // 진단용: ?debug=1 로 호출하면 키가 실제로 서버에 전달됐는지만 안전하게 확인합니다
+  // (키 전체를 노출하지 않고 길이와 앞 7자리만 보여줍니다). 확인 끝나면 이 블록은 지워도 됩니다.
+  if (req.query.debug) {
+    const key = process.env.ANTHROPIC_API_KEY || "";
+    res.status(200).json({
+      keyExists: !!process.env.ANTHROPIC_API_KEY,
+      keyLength: key.length,
+      keyPrefix: key.slice(0, 7),
+      upstashUrlExists: !!process.env.UPSTASH_REDIS_REST_URL,
+      upstashTokenExists: !!process.env.UPSTASH_REDIS_REST_TOKEN,
+    });
+    return;
+  }
+
   // Vercel Cron 검증 (CRON_SECRET을 설정한 경우에만 강제)
   const auth = req.headers.authorization;
   if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
