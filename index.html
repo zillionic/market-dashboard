@@ -440,6 +440,7 @@
   const KR_SECTORS_API = "/api/kr-sectors"; // 같은 배포 안의 API이므로 상대경로 사용 (도메인 바뀌어도 그대로 작동)
   const KR_BREADTH_API = "/api/kr-breadth";
   const US_INDICES_API = "/api/us-indices";
+  const BRIEFING_API = "/api/briefing";
 
   function fmtNum(n, digits = 2){
     return n.toLocaleString("ko-KR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
@@ -560,6 +561,22 @@
       const y = krBasDd.slice(0, 4), m = krBasDd.slice(4, 6), d = krBasDd.slice(6, 8);
       const nowKST = new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false });
       DATA.updatedAt = `${y}-${m}-${d} 국내 마감 기준 · 해외 ${usMarketState || "실시간"} 기준 (${nowKST} KST 갱신)`;
+    }
+
+    // ---- [시황 코멘트] 매일 아침 8시 Cron이 미리 만들어둔 요약을 읽어옵니다 ----
+    // (이 호출 자체는 Claude를 부르지 않고 Upstash에서 저장된 값만 읽으므로 비용이 들지 않습니다.
+    //  실제 생성은 하루 한 번, api/cron-briefing.js에서만 일어납니다.)
+    try {
+      const res = await fetch(BRIEFING_API, { cache: "no-store" });
+      if (res.ok) {
+        const j = await res.json();
+        if (j.kr?.briefing) { DATA.kr.briefing = j.kr.briefing; DATA.kr.briefingSource = j.kr.briefingSource; }
+        if (j.us?.briefing) { DATA.us.briefing = j.us.briefing; DATA.us.briefingSource = j.us.briefingSource; }
+      } else {
+        console.warn("briefing API 응답 실패 (아직 cron이 한 번도 안 돌았을 수 있음):", res.status);
+      }
+    } catch (err) {
+      console.warn("시황 코멘트 자동 갱신 실패, 스냅샷 값을 유지합니다:", err);
     }
 
     // ---- [해외 업종 등락률] Finviz — 공식 무료 API는 없음(Elite 구독형, finviz.com/elite). ----
