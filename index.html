@@ -275,9 +275,12 @@
     </section>
 
     <section class="panel">
-      <div class="panel-head">
-        <span class="eyebrow">United States</span>
-        <h2>S&amp;P 500 · NASDAQ · DOW</h2>
+      <div class="panel-head" style="display:flex; justify-content:space-between; align-items:flex-end;">
+        <div>
+          <span class="eyebrow">United States</span>
+          <h2>S&amp;P 500 · NASDAQ · DOW</h2>
+        </div>
+        <span class="badge" id="usMarketBadge" style="margin-bottom:2px;"></span>
       </div>
 
       <div class="index-row" id="us-index-row"></div>
@@ -514,7 +517,7 @@
       console.warn("국내 등락 종목 비율 실시간 연동 실패, 스냅샷 값을 유지합니다:", err);
     }
 
-    // ---- [해외 지수] stooq.com (실제 연동됨, 무료·키 불필요) ----
+    // ---- [해외 지수] Yahoo Finance (실제 연동됨, 무료·키 불필요) ----
     try {
       const res = await fetch(US_INDICES_API);
       if (res.ok) {
@@ -533,6 +536,13 @@
           const tEntry = DATA.ticker.find(t => t.name === name);
           if (tEntry) { tEntry.value = fmtNum(r.close); tEntry.delta = d.long; tEntry.cls = d.cls; }
         });
+
+        const badge = document.getElementById("usMarketBadge");
+        if (badge) {
+          const stateLabel = { REGULAR: "장중", PRE: "프리마켓", POST: "애프터마켓", CLOSED: "마감" };
+          badge.textContent = stateLabel[json.marketState] || "마감";
+          badge.className = "badge " + (json.isOpen ? "live" : "snapshot");
+        }
       } else {
         console.warn("us-indices API 응답 실패:", res.status);
       }
