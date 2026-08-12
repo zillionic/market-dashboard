@@ -110,7 +110,10 @@ module.exports = async function handler(req, res) {
     res.status(200).json({
       keyExists: !!process.env.ANTHROPIC_API_KEY,
       keyLength: key.length,
-      keyPrefix: key.slice(0, 7),
+      trimmedLength: key.trim().length,
+      hasHiddenWhitespace: key.length !== key.trim().length,
+      keyPrefix: key.slice(0, 12),
+      keySuffix: key.slice(-6),
       upstashUrlExists: !!process.env.UPSTASH_REDIS_REST_URL,
       upstashTokenExists: !!process.env.UPSTASH_REDIS_REST_TOKEN,
     });
