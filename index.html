@@ -453,7 +453,7 @@
   }
 
   async function fetchKrMarket(market){
-    const res = await fetch(`${KR_SECTORS_API}?market=${market}`);
+    const res = await fetch(`${KR_SECTORS_API}?market=${market}`, { cache: "no-store" });
     if (!res.ok) throw new Error(`kr-sectors(${market}) 응답 실패: ${res.status}`);
     return res.json();
   }
@@ -504,7 +504,7 @@
 
     // ---- [국내 등락 종목 비율] KRX Open API 전종목 시세 (실제 연동됨) ----
     try {
-      const res = await fetch(KR_BREADTH_API);
+      const res = await fetch(KR_BREADTH_API, { cache: "no-store" });
       if (res.ok) {
         const j = await res.json();
         if (j.kospi && j.kosdaq) {
@@ -523,7 +523,7 @@
 
     // ---- [해외 지수] Yahoo Finance (실제 연동됨, 무료·키 불필요) ----
     try {
-      const res = await fetch(US_INDICES_API);
+      const res = await fetch(US_INDICES_API, { cache: "no-store" });
       if (res.ok) {
         const json = await res.json();
         const rows = [
@@ -543,10 +543,10 @@
 
         const badge = document.getElementById("usMarketBadge");
         const stateLabel = { REGULAR: "장중", PRE: "프리마켓", POST: "애프터마켓", CLOSED: "마감" };
-        usMarketState = stateLabel[json.marketState] || "마감";
+        usMarketState = json.marketState ? (stateLabel[json.marketState] || json.marketState) : "실시간";
         if (badge) {
           badge.textContent = usMarketState;
-          badge.className = "badge " + (json.isOpen ? "live" : "snapshot");
+          badge.className = "badge " + (json.isOpen || !json.marketState ? "live" : "snapshot");
         }
       } else {
         console.warn("us-indices API 응답 실패:", res.status);
