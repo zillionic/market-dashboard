@@ -10,14 +10,20 @@
 //     환경변수로 넣으면 클라이언트(브라우저)에는 절대 노출되지 않습니다.
 //
 // 배포 후 호출 방법:
-//   GET https://<your-project>.vercel.app/api/kr-sectors            → KOSPI, 최근 거래일
+//   GET https://<your-project>.vercel.app/api/kr-sectors            → KOSPI, 가장 최근 발표된 거래일
 //   GET https://<your-project>.vercel.app/api/kr-sectors?market=KOSDAQ
-//   GET https://<your-project>.vercel.app/api/kr-sectors?basDd=20260807  → 특정 날짜 지정
+//   GET https://<your-project>.vercel.app/api/kr-sectors?basDd=20260807  → 특정 날짜 강제 지정
+//
+// ※ 이번 버전에서 바뀐 점: KRX는 장 마감 후 데이터 처리에 시간이 걸려서, 당일
+//   날짜로 조회하면 아직 데이터가 없을 수 있습니다. 데이터가 없으면 하루씩
+//   뒤로 가며(주말 자동 스킵) 최대 7일 전까지 자동 재시도해서, 접속 시점과
+//   무관하게 항상 "가장 최근 발표된" 실제 데이터를 반환합니다.
 //
 // 응답 예시:
 //   {
 //     "market": "KOSPI",
-//     "basDd": "20260807",
+//     "basDd": "20260807",              ← 실제로 데이터를 찾은 날짜 (요청한 날짜와 다를 수 있음)
+//     "requestedBasDd": "20260812",     ← 처음 요청했던 날짜
 //     "top5":    [{ "name": "코스피 화학", "pct": 3.21, "close": 4820.11 }, ...],
 //     "bottom5": [{ "name": "코스피 유통업", "pct": -2.15, "close": 512.4 }, ...],
 //     "rawCount": 21,
@@ -49,16 +55,37 @@ function isCompositeOrSizeIndex(name) {
   return EXCLUDE_NAME_KEYWORDS.some((kw) => trimmed.includes(kw));
 }
 
-function getLastTradingDay() {
-  const d = new Date();
-  const day = d.getDay(); // 0=일 6=토
-  if (day === 0) d.setDate(d.getDate() - 2);
-  if (day === 6) d.setDate(d.getDate() - 1);
-  // TODO: 한국 공휴일 목록을 반영하려면 여기에 날짜 보정 로직을 추가하세요.
+function toBasDd(d) {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
   const dd = String(d.getDate()).padStart(2, "0");
   return `${y}${m}${dd}`;
+}
+
+// 오늘부터 하루씩 거슬러 올라가며 시도할 날짜 후보 목록 생성 (주말은 건너뜀).
+// TODO: 한국 공휴일까지 완벽히 거르려면 공휴일 목록을 추가해 skip 조건에 넣어주세요.
+// 공휴일은 목록에 없어도 어차피 그날 KRX 데이터가 비어있을 것이므로 자동으로 스킵됩니다.
+function candidateDates(maxDays = 7) {
+  const dates = [];
+  const d = new Date();
+  while (dates.length < maxDays) {
+    const day = d.getDay(); // 0=일 6=토
+    if (day !== 0 && day !== 6) dates.push(toBasDd(d));
+    d.setDate(d.getDate() - 1);
+  }
+  return dates;
+}
+
+async function fetchForDate(endpoint, basDd, authKey) {
+  const krxRes = await fetch(`${endpoint}?basDd=${basDd}`, {
+    headers: { AUTH_KEY: authKey },
+  });
+  if (!krxRes.ok) {
+    const text = await krxRes.text().catch(() => "");
+    throw new Error(`KRX API 오류 (${krxRes.status}): ${text}`);
+  }
+  const data = await krxRes.json();
+  return data.OutBlock_1 || [];
 }
 
 module.exports = async function handler(req, res) {
@@ -75,21 +102,31 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  const basDd = req.query.basDd || getLastTradingDay();
+  // 날짜를 직접 지정한 경우 재시도 없이 그 날짜만 조회 (디버깅/특정일 조회용).
+  const forcedBasDd = req.query.basDd;
+  const attempts = forcedBasDd ? [forcedBasDd] : candidateDates(7);
+  const requestedBasDd = forcedBasDd || attempts[0];
 
   try {
-    const krxRes = await fetch(`${endpoint}?basDd=${basDd}`, {
-      headers: { AUTH_KEY },
-    });
+    let rows = [];
+    let usedBasDd = null;
 
-    if (!krxRes.ok) {
-      const text = await krxRes.text().catch(() => "");
-      res.status(krxRes.status).json({ error: `KRX API 오류 (${krxRes.status})`, detail: text });
-      return;
+    for (const basDd of attempts) {
+      const result = await fetchForDate(endpoint, basDd, AUTH_KEY);
+      if (result.length > 0) {
+        rows = result;
+        usedBasDd = basDd;
+        break;
+      }
     }
 
-    const data = await krxRes.json();
-    const rows = data.OutBlock_1 || [];
+    if (!usedBasDd) {
+      res.status(404).json({
+        error: `최근 ${attempts.length}일 이내 발표된 데이터를 찾지 못했습니다.`,
+        triedDates: attempts,
+      });
+      return;
+    }
 
     const compositeRow = rows.find((r) => r.IDX_NM && r.IDX_NM.trim() === (market === "KOSPI" ? "코스피" : "코스닥"));
     const composite = compositeRow
@@ -119,7 +156,8 @@ module.exports = async function handler(req, res) {
     res.setHeader("Cache-Control", "s-maxage=3600, stale-while-revalidate=600");
     res.status(200).json({
       market,
-      basDd,
+      basDd: usedBasDd,
+      requestedBasDd,
       composite,
       top5,
       bottom5,
