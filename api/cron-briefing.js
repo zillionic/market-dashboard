@@ -31,7 +31,10 @@ async function redisSet(key, valueObj) {
     headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` },
     body: JSON.stringify(valueObj),
   });
-  if (!res.ok) throw new Error(`Upstash 저장 실패: ${res.status}`);
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Upstash 저장 실패 (${res.status}): ${text} | url=${UPSTASH_URL} tokenLen=${(UPSTASH_TOKEN||"").length}`);
+  }
 }
 
 // t.me/s/{channel} 미리보기 페이지에서 가장 최근 메시지의 텍스트만 대략 추출합니다.
