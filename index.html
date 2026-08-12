@@ -459,12 +459,16 @@
   }
 
   async function fetchLiveData(){
+    let krBasDd = null;
+    let usMarketState = null;
+
     // ---- [국내 지수 + 업종 등락률] KRX Open API (실제 연동됨) ----
     try {
       const [kospiJson, kosdaqJson] = await Promise.all([
         fetchKrMarket("KOSPI"),
         fetchKrMarket("KOSDAQ"),
       ]);
+      krBasDd = kospiJson.basDd;
 
       // 코스피/코스닥 지수 카드 + 상단 티커 갱신
       if (kospiJson.composite) {
@@ -538,9 +542,10 @@
         });
 
         const badge = document.getElementById("usMarketBadge");
+        const stateLabel = { REGULAR: "장중", PRE: "프리마켓", POST: "애프터마켓", CLOSED: "마감" };
+        usMarketState = stateLabel[json.marketState] || "마감";
         if (badge) {
-          const stateLabel = { REGULAR: "장중", PRE: "프리마켓", POST: "애프터마켓", CLOSED: "마감" };
-          badge.textContent = stateLabel[json.marketState] || "마감";
+          badge.textContent = usMarketState;
           badge.className = "badge " + (json.isOpen ? "live" : "snapshot");
         }
       } else {
@@ -548,6 +553,13 @@
       }
     } catch (err) {
       console.warn("해외 지수 실시간 연동 실패, 스냅샷 값을 유지합니다:", err);
+    }
+
+    // ---- 상단 "데이터 기준" 표시를 실제 조회된 날짜/시각으로 갱신 ----
+    if (krBasDd) {
+      const y = krBasDd.slice(0, 4), m = krBasDd.slice(4, 6), d = krBasDd.slice(6, 8);
+      const nowKST = new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false });
+      DATA.updatedAt = `${y}-${m}-${d} 국내 마감 기준 · 해외 ${usMarketState || "실시간"} 기준 (${nowKST} KST 갱신)`;
     }
 
     // ---- [해외 업종 등락률] Finviz — 공식 무료 API는 없음(Elite 구독형, finviz.com/elite). ----
