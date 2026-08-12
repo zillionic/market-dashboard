@@ -71,10 +71,10 @@ module.exports = async function handler(req, res) {
     const marketState = sp500.marketState;
     const isOpen = marketState === "REGULAR";
 
-    // 장중에는 짧게(1분), 마감 후에는 좀 더 길게(10분) 캐시해서
-    // 장중엔 자주 갱신되면서도 불필요한 호출은 줄입니다.
-    const cacheSeconds = isOpen ? 60 : 600;
-    res.setHeader("Cache-Control", `s-maxage=${cacheSeconds}, stale-while-revalidate=60`);
+    // 캐시를 아예 없애서 요청할 때마다 Yahoo에서 100% 새로 가져옵니다.
+    // (예전엔 marketState 기반으로 60초/600초 캐시를 걸었는데, Yahoo가 지수 심볼에는
+    //  marketState를 null로 주는 경우가 있어 "마감"으로 오판, 10분 캐시가 걸리는 버그가 있었습니다.)
+    res.setHeader("Cache-Control", "no-store");
 
     res.status(200).json({
       marketState,
