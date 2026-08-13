@@ -105,6 +105,61 @@ function isWeekendKST() {
   return day === 0 || day === 6 || KR_HOLIDAYS.includes(iso);
 }
 
+// 같은 배포 안의 /api/kr-sectors를 호출해서 오늘 실제 업종 TOP5/BOTTOM5 숫자를 가져옵니다.
+async function fetchKrSectors() {
+  const base = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "";
+  const res = await fetch(`${base}/api/kr-sectors?market=KOSPI`);
+  if (!res.ok) throw new Error(`kr-sectors 조회 실패: ${res.status}`);
+  const json = await res.json();
+  return { top5: json.top5 || [], bottom5: json.bottom5 || [] };
+}
+
+// 업종 TOP5/BOTTOM5 각각에 대해 "왜 그렇게 움직였는지" 한 줄 이유를 Claude가 생성합니다.
+// 텔레그램 원문에 관련 내용이 있으면 그걸 활용하고, 없으면 업종 특성 기반으로 합리적으로 추정합니다.
+async function generateSectorReasons(rawText, sectors) {
+  if (sectors.length === 0) return [];
+
+  const sectorList = sectors.map((s) => `- ${s.name} (${s.pct > 0 ? "+" : ""}${s.pct}%)`).join("\n");
+  const prompt = `다음은 오늘 한국 증시 시황을 다루는 증권사 텔레그램 채널의 최신 글입니다.
+
+원문:
+${rawText}
+
+아래는 오늘 실제로 상승·하락 상위로 집계된 업종 목록입니다. 각 업종별로 왜 그런 움직임을 보였는지 개조식(명사형 종결)으로 15~25자 내외의 아주 간결한 한 줄 이유를 작성해주세요. 원문에 관련 내용이 있으면 그걸 활용하고, 없으면 업종 특성과 시황 전반을 참고해 합리적으로 추정해서 작성하세요.
+
+업종 목록:
+${sectorList}
+
+아래 JSON 배열 형식으로만 출력하세요. 다른 설명, 마크다운 코드블록, 전제 문구 없이 JSON만 출력합니다:
+[{"name":"업종명","reason":"이유"}, ...]`;
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": process.env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-5",
+      max_tokens: 800,
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Anthropic API 오류 (업종 이유, ${res.status}): ${text}`);
+  }
+
+  const json = await res.json();
+  const textBlock = (json.content || []).find((c) => c.type === "text");
+  if (!textBlock) throw new Error("Claude 응답(업종 이유)에서 텍스트를 찾지 못했습니다.");
+
+  const cleaned = textBlock.text.trim().replace(/^```json\s*|^```\s*|```$/g, "");
+  return JSON.parse(cleaned);
+}
+
 module.exports = async function handler(req, res) {
   // Vercel Cron 검증 (CRON_SECRET을 설정한 경우에만 강제)
   const auth = req.headers.authorization;
@@ -129,10 +184,20 @@ module.exports = async function handler(req, res) {
       summarize(usRaw, "해외(S&P500/나스닥/다우)"),
     ]);
 
+    // 업종별 이유는 별도 실패로 전체가 죽지 않도록 따로 try/catch 처리합니다.
+    let sectorReasons = [];
+    try {
+      const { top5, bottom5 } = await fetchKrSectors();
+      sectorReasons = await generateSectorReasons(krRaw, [...top5, ...bottom5]);
+    } catch (err) {
+      console.warn("업종별 이유 생성 실패, 이 부분만 건너뜁니다:", err);
+    }
+
     const payload = {
       kr: {
         briefing: krBriefing,
         briefingSource: "출처: 신한투자증권 강진혁(국내 시황, t.me/shStrategy) · Claude 자동 요약",
+        sectorReasons,
       },
       us: {
         briefing: usBriefing,
