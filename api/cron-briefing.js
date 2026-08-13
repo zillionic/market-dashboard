@@ -116,11 +116,11 @@ async function fetchKrSectors() {
 
 // 업종 TOP5/BOTTOM5 각각에 대해 "왜 그렇게 움직였는지" 한 줄 이유를 Claude가 생성합니다.
 // 텔레그램 원문에 관련 내용이 있으면 그걸 활용하고, 없으면 업종 특성 기반으로 합리적으로 추정합니다.
-async function generateSectorReasons(rawText, sectors) {
+async function generateSectorReasons(rawText, sectors, marketLabel) {
   if (sectors.length === 0) return [];
 
   const sectorList = sectors.map((s) => `- ${s.name} (${s.pct > 0 ? "+" : ""}${s.pct}%)`).join("\n");
-  const prompt = `다음은 오늘 한국 증시 시황을 다루는 증권사 텔레그램 채널의 최신 글입니다.
+  const prompt = `다음은 오늘 ${marketLabel} 시황을 다루는 증권사 텔레그램 채널의 최신 글입니다.
 
 원문:
 ${rawText}
@@ -160,7 +160,69 @@ ${sectorList}
   return JSON.parse(cleaned);
 }
 
+// S&P 500 공식 GICS 섹터 지수를 Yahoo Finance에서 직접 가져옵니다 (ETF 아님, 지수 자체).
+// ⚠️ 이 심볼들(^SP500-XX)이 Yahoo에서 지금도 정상 작동하는지 직접 테스트는 못 해봤습니다.
+// 배포 후 ?debugSectors=1 로 먼저 확인해주세요 — 심볼이 죽어있으면 그 업종만 조용히 빠집니다.
+const US_SECTOR_INDEX_SYMBOLS = {
+  "^SP500-45": "정보기술",
+  "^SP500-40": "금융",
+  "^SP500-35": "헬스케어",
+  "^SP500-25": "임의소비재",
+  "^SP500-30": "필수소비재",
+  "^SP500-10": "에너지",
+  "^SP500-20": "산업재",
+  "^SP500-15": "소재",
+  "^SP500-55": "유틸리티",
+  "^SP500-60": "부동산",
+  "^SP500-50": "커뮤니케이션서비스",
+};
+
+async function fetchUsSectorIndices() {
+  const symbols = Object.keys(US_SECTOR_INDEX_SYMBOLS);
+  const settled = await Promise.allSettled(
+    symbols.map(async (sym) => {
+      const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}`;
+      const res = await fetch(url, {
+        headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+      });
+      if (!res.ok) throw new Error(`${sym} 응답 실패 (${res.status})`);
+      const json = await res.json();
+      const meta = json?.chart?.result?.[0]?.meta;
+      if (!meta) throw new Error(`${sym} 데이터 없음`);
+      const close = meta.regularMarketPrice;
+      const prevClose = meta.chartPreviousClose ?? meta.previousClose;
+      if (!Number.isFinite(close) || !Number.isFinite(prevClose)) throw new Error(`${sym} 필드 누락`);
+      const pct = ((close - prevClose) / prevClose) * 100;
+      return { name: US_SECTOR_INDEX_SYMBOLS[sym], pct: Number(pct.toFixed(2)) };
+    })
+  );
+
+  const results = settled
+    .filter((r) => r.status === "fulfilled")
+    .map((r) => r.value);
+  const failed = settled
+    .map((r, i) => (r.status === "rejected" ? { symbol: symbols[i], error: String(r.reason) } : null))
+    .filter(Boolean);
+
+  if (results.length === 0) throw new Error("모든 섹터 지수 심볼이 실패했습니다: " + JSON.stringify(failed));
+
+  results.sort((a, b) => b.pct - a.pct);
+  return { top5: results.slice(0, 5), bottom5: results.slice(-5).reverse(), failed };
+}
+
 module.exports = async function handler(req, res) {
+  // 진단용: ?debugSectors=1 로 호출하면 Claude/Upstash 없이 Yahoo 섹터 지수 결과만 확인합니다
+  // (비용 없음, 저장도 안 함 — CRON_SECRET 없이 브라우저로 바로 테스트 가능).
+  if (req.query.debugSectors) {
+    try {
+      const result = await fetchUsSectorIndices();
+      res.status(200).json(result);
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+    return;
+  }
+
   // Vercel Cron 검증 (CRON_SECRET을 설정한 경우에만 강제)
   const auth = req.headers.authorization;
   if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -185,23 +247,38 @@ module.exports = async function handler(req, res) {
     ]);
 
     // 업종별 이유는 별도 실패로 전체가 죽지 않도록 따로 try/catch 처리합니다.
-    let sectorReasons = [];
+    let krSectorReasons = [];
     try {
       const { top5, bottom5 } = await fetchKrSectors();
-      sectorReasons = await generateSectorReasons(krRaw, [...top5, ...bottom5]);
+      krSectorReasons = await generateSectorReasons(krRaw, [...top5, ...bottom5], "한국 증시");
     } catch (err) {
-      console.warn("업종별 이유 생성 실패, 이 부분만 건너뜁니다:", err);
+      console.warn("국내 업종별 이유 생성 실패, 이 부분만 건너뜁니다:", err);
+    }
+
+    let usSectorsTop = [], usSectorsBottom = [], usSectorReasons = [];
+    try {
+      const { top5, bottom5 } = await fetchUsSectorIndices();
+      usSectorReasons = await generateSectorReasons(usRaw, [...top5, ...bottom5], "미국 증시");
+      const reasonMap = {};
+      usSectorReasons.forEach(r => { reasonMap[r.name] = r.reason; });
+      usSectorsTop = top5.map(s => ({ ...s, reason: reasonMap[s.name] || "" }));
+      usSectorsBottom = bottom5.map(s => ({ ...s, reason: reasonMap[s.name] || "" }));
+    } catch (err) {
+      console.warn("해외 업종 데이터/이유 생성 실패, 이 부분만 건너뜁니다:", err);
     }
 
     const payload = {
       kr: {
         briefing: krBriefing,
         briefingSource: "출처: 신한투자증권 강진혁(국내 시황, t.me/shStrategy) · Claude 자동 요약",
-        sectorReasons,
+        sectorReasons: krSectorReasons,
       },
       us: {
         briefing: usBriefing,
         briefingSource: "출처: 사제콩이_서상영(미래에셋증권, t.me/ehdwl) · Claude 자동 요약",
+        sectorsTop: usSectorsTop,
+        sectorsBottom: usSectorsBottom,
+        sectorsSource: "출처: Yahoo Finance(S&P 500 GICS 섹터 지수) · Claude 자동 요약",
       },
       generatedAt: new Date().toISOString(),
     };
