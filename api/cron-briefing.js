@@ -407,6 +407,24 @@ module.exports = async function handler(req, res) {
     return;
   }
 
+  // 진단용: ?debugNotionEnv=1 로 호출하면 환경변수가 실제로 서버에 전달됐는지만 안전하게 확인합니다
+  // (키 전체를 노출하지 않고 길이·접두사만 보여줍니다. 401 오류가 계속되면 이걸로 먼저 확인해주세요.)
+  if (req.query.debugNotionEnv) {
+    const key = NOTION_API_KEY || "";
+    res.status(200).json({
+      keyExists: !!NOTION_API_KEY,
+      keyLength: key.length,
+      trimmedLength: key.trim().length,
+      hasHiddenWhitespace: key.length !== key.trim().length,
+      keyPrefix: key.slice(0, 10),
+      pageIdExists: !!NOTION_PAGE_ID,
+      pageIdFormatted: formatNotionId(NOTION_PAGE_ID),
+      anchorIdExists: !!NOTION_ANCHOR_BLOCK_ID,
+      anchorIdFormatted: formatNotionId(NOTION_ANCHOR_BLOCK_ID),
+    });
+    return;
+  }
+
   // 진단용: ?debugNotion=1 로 호출하면 Claude 없이 테스트 블록 하나만 노션에 실제로 꼽아봅니다.
   // (연결·권한·앵커 블록 ID가 맞는지 확인용. 성공하면 노션 페이지에 테스트 항목이 실제로 생깁니다.)
   if (req.query.debugNotion) {
