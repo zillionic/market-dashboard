@@ -1,8 +1,8 @@
 {
   "crons": [
-    { "path": "/api/cron-briefing", "schedule": "0 23 * * *" }
+    { "path": "/api/cron-briefing", "schedule": "30 22 * * *" }
   ],
   "functions": {
-    "api/cron-briefing.js": { "maxDuration": 30 }
+    "api/cron-briefing.js": { "maxDuration": 60 }
   }
 }
