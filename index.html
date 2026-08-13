@@ -280,9 +280,12 @@
   <main class="grid">
 
     <section class="panel">
-      <div class="panel-head">
-        <span class="eyebrow">Korea</span>
-        <h2>코스피 · 코스닥</h2>
+      <div class="panel-head" style="display:flex; justify-content:space-between; align-items:flex-end;">
+        <div>
+          <span class="eyebrow">Korea</span>
+          <h2>코스피 · 코스닥</h2>
+        </div>
+        <span class="badge snapshot" id="krMarketBadge" style="margin-bottom:2px;"></span>
       </div>
 
       <div class="index-row" id="kr-index-row"></div>
@@ -591,6 +594,11 @@
       const y = krBasDd.slice(0, 4), m = krBasDd.slice(4, 6), d = krBasDd.slice(6, 8);
       const nowKST = new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false });
       DATA.updatedAt = `${y}-${m}-${d} 국내 마감 기준 · 해외 ${usMarketState || "장마감"} 기준 (${nowKST} KST 갱신)`;
+
+      const krBadge = document.getElementById("krMarketBadge");
+      if (krBadge) {
+        krBadge.textContent = `${Number(m)}월 ${Number(d)}일 마감 기준`;
+      }
     }
 
     // ---- [시황 코멘트] 매일 아침 8시 Cron이 미리 만들어둔 요약을 읽어옵니다 ----
