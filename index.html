@@ -610,6 +610,15 @@
         const j = await res.json();
         if (j.kr?.briefing) { DATA.kr.briefing = j.kr.briefing; DATA.kr.briefingSource = j.kr.briefingSource; }
         if (j.us?.briefing) { DATA.us.briefing = j.us.briefing; DATA.us.briefingSource = j.us.briefingSource; }
+
+        // Claude가 오늘 아침 생성해둔 업종별 이유를, 이름이 같은 업종에 매칭해서 덮어씁니다.
+        if (Array.isArray(j.kr?.sectorReasons) && j.kr.sectorReasons.length) {
+          const reasonMap = {};
+          j.kr.sectorReasons.forEach(r => { reasonMap[r.name] = r.reason; });
+          [...DATA.kr.sectorsTop, ...DATA.kr.sectorsBottom].forEach(s => {
+            if (reasonMap[s.name]) s.reason = reasonMap[s.name];
+          });
+        }
       } else {
         console.warn("briefing API 응답 실패 (아직 cron이 한 번도 안 돌았을 수 있음):", res.status);
       }
