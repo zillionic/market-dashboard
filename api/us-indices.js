@@ -3,22 +3,16 @@
 // Vercel 서버리스 함수 — Yahoo Finance 비공식 차트 API로 S&P500/Nasdaq/Dow 조회
 // 완전 무료, 키(인증) 불필요.
 //
-// Yahoo의 regularMarketPrice 필드는 원래 "장중엔 실시간가, 마감 후엔 종가"를
-// 그대로 반환합니다. marketState 필드로 지금이 장중인지 마감인지도 함께 줍니다.
+// ⚠️ 이전 버전은 Yahoo가 주는 meta.marketState 필드로 장중/마감을 판단했는데,
+// 이 지수 심볼들(^GSPC 등)에는 그 필드가 거의 항상 null로 와서 실제로 장이
+// 열려있어도 "마감"으로 잘못 표시되는 버그가 있었습니다. 그래서 이번 버전은
+// Yahoo 값을 믿지 않고, 뉴욕 시간을 직접 계산해서 정규장 여부를 판단합니다.
+// (미국 공휴일은 반영하지 않음 — 그날은 실제로 장이 닫혀있어도 "장중"으로 잘못
+//  표시될 수 있습니다. 필요하면 US_HOLIDAYS 배열에 날짜를 추가하세요.)
 //
 // 호출: GET https://<your-project>.vercel.app/api/us-indices
 //
-// 응답 예시 (장중):
-//   {
-//     "marketState": "REGULAR",
-//     "isOpen": true,
-//     "sp500":  { "symbol": "^GSPC", "close": 7751.08, "change": 22.88, "pct": 0.30 },
-//     "nasdaq": { "symbol": "^IXIC", "close": 26595.50, "change": 150.06, "pct": 0.57 },
-//     "dow":    { "symbol": "^DJI",  "close": 53858.84, "change": 66.99, "pct": 0.12 },
-//     "updatedAt": "2026-08-12T13:44:39.880Z"
-//   }
-//
-// marketState 값: PRE(프리마켓) / REGULAR(정규장) / POST(애프터마켓) / CLOSED(마감)
+// marketState 값: PRE(프리마켓) / REGULAR(정규장) / POST(애프터마켓) / CLOSED(마감·주말)
 // -----------------------------------------------------------------------------
 
 const SYMBOLS = {
@@ -26,6 +20,42 @@ const SYMBOLS = {
   nasdaq: "^IXIC",
   dow: "^DJI",
 };
+
+// TODO: 미국 공휴일까지 반영하려면 'YYYY-MM-DD'(뉴욕 날짜 기준) 형식으로 추가하세요.
+const US_HOLIDAYS = [];
+
+function getMarketState() {
+  const nyParts = new Intl.DateTimeFormat("en-US", {
+    timeZone: "America/New_York",
+    weekday: "short",
+    hour: "numeric",
+    minute: "numeric",
+    hour12: false,
+  }).formatToParts(new Date());
+
+  const get = (type) => nyParts.find((p) => p.type === type)?.value;
+  const weekday = get("weekday"); // "Mon".."Sun"
+  const hour = Number(get("hour"));
+  const minute = Number(get("minute"));
+  const minutesNow = hour * 60 + minute;
+
+  const nyDateStr = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" }); // YYYY-MM-DD
+
+  const isWeekend = weekday === "Sat" || weekday === "Sun";
+  const isHoliday = US_HOLIDAYS.includes(nyDateStr);
+
+  if (isWeekend || isHoliday) return "CLOSED";
+
+  const PRE_START = 4 * 60;        // 04:00
+  const REGULAR_START = 9 * 60 + 30; // 09:30
+  const REGULAR_END = 16 * 60;      // 16:00
+  const POST_END = 20 * 60;         // 20:00
+
+  if (minutesNow >= REGULAR_START && minutesNow < REGULAR_END) return "REGULAR";
+  if (minutesNow >= PRE_START && minutesNow < REGULAR_START) return "PRE";
+  if (minutesNow >= REGULAR_END && minutesNow < POST_END) return "POST";
+  return "CLOSED";
+}
 
 async function fetchOne(symbol) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`;
@@ -55,7 +85,6 @@ async function fetchOne(symbol) {
     close: Number(close.toFixed(2)),
     change: Number(change.toFixed(2)),
     pct: Number(pct.toFixed(2)),
-    marketState: meta.marketState || null, // PRE / REGULAR / POST / CLOSED
   };
 }
 
@@ -67,13 +96,10 @@ module.exports = async function handler(req, res) {
       fetchOne(SYMBOLS.dow),
     ]);
 
-    // 세 지수의 marketState는 사실상 항상 같으므로 대표로 하나만 상단에 노출합니다.
-    const marketState = sp500.marketState;
+    const marketState = getMarketState(); // 뉴욕 시간 기준 직접 계산 (Yahoo 필드 사용 안 함)
     const isOpen = marketState === "REGULAR";
 
-    // 캐시를 아예 없애서 요청할 때마다 Yahoo에서 100% 새로 가져옵니다.
-    // (예전엔 marketState 기반으로 60초/600초 캐시를 걸었는데, Yahoo가 지수 심볼에는
-    //  marketState를 null로 주는 경우가 있어 "마감"으로 오판, 10분 캐시가 걸리는 버그가 있었습니다.)
+    // 캐시 없이 매번 새로 가져옵니다.
     res.setHeader("Cache-Control", "no-store");
 
     res.status(200).json({
