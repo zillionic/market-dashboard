@@ -13,6 +13,10 @@
 //                                  API 비용을 낭비시키는 걸 막아줍니다.
 //                                  처음 테스트할 땐 일부러 안 넣고 브라우저로
 //                                  직접 열어봐도 됩니다.)
+//   NOTION_API_KEY             - notion.so/my-integrations에서 발급한 Integration Secret
+//   NOTION_PAGE_ID              - 노션 페이지 URL의 32자리 ID 부분
+//   NOTION_ANCHOR_BLOCK_ID      - 페이지 맨 위에 만들어둔 구분선 블록의 ID
+//                                 (이 셋 중 하나라도 없으면 노션 업데이트는 조용히 건너뜁니다)
 //
 // 휴일 처리: 오늘이 한국 기준 토/일이면 아무 것도 안 하고 종료합니다.
 // Upstash에 저장된 값(가장 최근 평일 요약)이 그대로 유지되므로,
@@ -210,13 +214,208 @@ async function fetchUsSectorIndices() {
   return { top5: results.slice(0, 5), bottom5: results.slice(-5).reverse(), failed };
 }
 
+// ============================================================================
+// Notion 연동 — 매일 "시장" / "개별 종목 및 이슈" 항목을 노션 페이지 맨 위에 추가
+// ============================================================================
+const NOTION_API_KEY = process.env.NOTION_API_KEY;
+const NOTION_PAGE_ID = process.env.NOTION_PAGE_ID;
+const NOTION_ANCHOR_BLOCK_ID = process.env.NOTION_ANCHOR_BLOCK_ID;
+
+// Notion 블록 ID는 대시(-) 포함 UUID 형식을 기대합니다. URL에서 복사한 값이
+// 대시 없이 32자리로 오는 경우를 대비해 표준 형식으로 보정합니다.
+function formatNotionId(id) {
+  if (!id) return id;
+  const hex = id.replace(/[^a-f0-9]/gi, "");
+  if (hex.length !== 32) return id; // 이미 다른 형식이면 그대로 시도
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+}
+
+async function notionInsertBlocks(children) {
+  const pageId = formatNotionId(NOTION_PAGE_ID);
+  const after = formatNotionId(NOTION_ANCHOR_BLOCK_ID);
+
+  const res = await fetch(`https://api.notion.com/v1/blocks/${pageId}/children`, {
+    method: "PATCH",
+    headers: {
+      Authorization: `Bearer ${NOTION_API_KEY}`,
+      "Notion-Version": "2022-06-28",
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ children, after }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Notion API 오류 (${res.status}): ${text}`);
+  }
+  return res.json();
+}
+
+function rt(text, bold = false) {
+  return { type: "text", text: { content: text }, annotations: { bold } };
+}
+
+// "**굵게**" 마크다운이 섞인 문단을 Notion rich_text 배열로 변환합니다.
+function parseBoldMarkdown(text) {
+  const parts = text.split(/(\*\*[^*]+\*\*)/g).filter(Boolean);
+  return parts.map((p) => {
+    const m = p.match(/^\*\*([^*]+)\*\*$/);
+    return m ? rt(m[1], true) : rt(p, false);
+  });
+}
+
+function heading2(text) {
+  return { object: "block", type: "heading_2", heading_2: { rich_text: [rt(text)] } };
+}
+function heading3(text) {
+  return { object: "block", type: "heading_3", heading_3: { rich_text: [rt(text)] } };
+}
+function paragraph(text) {
+  return { object: "block", type: "paragraph", paragraph: { rich_text: parseBoldMarkdown(text) } };
+}
+function bullet(text) {
+  return { object: "block", type: "bulleted_list_item", bulleted_list_item: { rich_text: [rt(text)] } };
+}
+
+// 오늘의 "시장" 문단을 노트 스타일(국내/해외 굵게 리드인 + 서술형)로 생성합니다.
+async function generateMarketSection(krRaw, usRaw) {
+  const prompt = `아래는 오늘 국내·해외 시황을 다루는 증권사 텔레그램 채널 원문 2개입니다.
+
+[국내 시황 원문]
+${krRaw}
+
+[해외 시황 원문]
+${usRaw}
+
+이 내용을 참고해서, 매일 아침 운용팀 회의용으로 정리하는 "시장" 섹션을 작성해주세요. 아래 예시와 정확히 같은 스타일로 써주세요.
+
+예시:
+**국내(코스피·코스닥)**: 코스피 6,345.53(+0.73%)·코스닥 857.84(+0.39%)로 마감. 개장은 지정학 리스크 심화, 미 국채금리·유가 상승 여파로 약세 출발했으나, 반도체 수출 호조가 확인되며 외국인·기관 동반 순매수에 힘입어 반등. 삼성전자 +4.13%, SK하이닉스 +0.35%로 반도체 대형주가 지수를 견인
+
+**미국(S&P·나스닥·다우)**: S&P500(-0.32%) 7,728.20·나스닥(-0.60%) 26,445.45·다우(-0.34%) 53,791.85로 2거래일 연속 하락. 미-이란 협상 교착으로 유가가 상승, 기술주 중심 매도 압력으로 이어짐
+
+규칙:
+- 개조식(명사형 종결)으로 작성, "~습니다/~했다" 같은 종결어미 쓰지 않기
+- 국내/해외 각각 굵게(**국내(코스피·코스닥)**, **미국(S&P·나스닥·다우)**)로 시작하는 한 문단씩
+- 지수 수치와 등락률이 원문에 있으면 반드시 포함
+- 다른 설명 없이 결과 텍스트만 출력 (마크다운 코드블록 금지)`;
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": process.env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-5",
+      max_tokens: 1000,
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+  if (!res.ok) throw new Error(`Anthropic API 오류 (시장 섹션, ${res.status}): ${await res.text().catch(() => "")}`);
+  const json = await res.json();
+  const textBlock = (json.content || []).find((c) => c.type === "text");
+  if (!textBlock) throw new Error("Claude 응답(시장 섹션)에서 텍스트를 찾지 못했습니다.");
+  return textBlock.text.trim();
+}
+
+// "개별 종목 및 이슈" 불릿 리스트 — 원문에 언급된 종목별 실적·공시·뉴스만 추립니다.
+// (팀 내부 미팅/NDR 판단 내용은 원문에 없으므로 여기 포함되지 않습니다.)
+async function generateStockNewsSection(krRaw, usRaw) {
+  const prompt = `아래는 오늘 국내·해외 시황을 다루는 증권사 텔레그램 채널 원문 2개입니다.
+
+[국내 시황 원문]
+${krRaw}
+
+[해외 시황 원문]
+${usRaw}
+
+이 원문에서 "개별 종목별 실적 발표, 공시(공급계약·유상증자 등), 주가에 영향을 줄 만한 뉴스"만 뽑아서 불릿 목록으로 정리해주세요. 아래 예시 스타일 그대로 작성하세요.
+
+예시:
+- KT, 2Q26 매출 6.7조(YoY 10%), 영업이익 6,483억(YoY -36%), 컨센서스 상회
+- 메리츠금융지주 순이익 7,914억(YoY 7.3%) → 방어주 역할
+- 코어위브 컨센서스 상회 실적 발표, 애프터마켓에서 14% 상승
+
+규칙:
+- 개조식(명사형 종결)
+- 원문에 없는 내용(팀 내부 판단, 포트폴리오 비중 조절 등)은 절대 지어내지 말 것
+- 원문에서 종목별 뉴스가 없으면 빈 배열([])을 반환
+- 아래 JSON 배열 형식으로만 출력 (다른 설명, 마크다운 코드블록 금지):
+["불릿 텍스트1", "불릿 텍스트2", ...]`;
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": process.env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-5",
+      max_tokens: 1000,
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+  if (!res.ok) throw new Error(`Anthropic API 오류 (종목 이슈, ${res.status}): ${await res.text().catch(() => "")}`);
+  const json = await res.json();
+  const textBlock = (json.content || []).find((c) => c.type === "text");
+  if (!textBlock) throw new Error("Claude 응답(종목 이슈)에서 텍스트를 찾지 못했습니다.");
+  const cleaned = textBlock.text.trim().replace(/^```json\s*|^```\s*|```$/g, "");
+  return JSON.parse(cleaned);
+}
+
+function todayKSTCompact() {
+  const kst = new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Seoul" }); // YYYY-MM-DD
+  return kst.replace(/-/g, "");
+}
+
+async function postToNotion(krRaw, usRaw) {
+  const [marketSection, stockNews] = await Promise.all([
+    generateMarketSection(krRaw, usRaw),
+    generateStockNewsSection(krRaw, usRaw),
+  ]);
+
+  const marketParagraphs = marketSection.split("\n").filter((l) => l.trim()).map(paragraph);
+  const stockBullets = stockNews.length ? stockNews.map(bullet) : [bullet("(오늘은 원문에서 종목별 이슈를 찾지 못했습니다)")];
+
+  const children = [
+    heading2(todayKSTCompact()),
+    heading3("시장"),
+    ...marketParagraphs,
+    heading3("개별 종목 및 이슈"),
+    ...stockBullets,
+    heading3("일정"),
+    bullet(""), // 직접 채워 넣을 빈 칸
+  ];
+
+  await notionInsertBlocks(children);
+}
+
 module.exports = async function handler(req, res) {
   // 진단용: ?debugSectors=1 로 호출하면 Claude/Upstash 없이 Yahoo 섹터 지수 결과만 확인합니다
   // (비용 없음, 저장도 안 함 — CRON_SECRET 없이 브라우저로 바로 테스트 가능).
   if (req.query.debugSectors) {
+
     try {
       const result = await fetchUsSectorIndices();
       res.status(200).json(result);
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+    return;
+  }
+
+  // 진단용: ?debugNotion=1 로 호출하면 Claude 없이 테스트 블록 하나만 노션에 실제로 꼽아봅니다.
+  // (연결·권한·앵커 블록 ID가 맞는지 확인용. 성공하면 노션 페이지에 테스트 항목이 실제로 생깁니다.)
+  if (req.query.debugNotion) {
+    try {
+      await notionInsertBlocks([
+        heading3(`테스트 — ${new Date().toISOString()}`),
+        paragraph("이 블록이 보이면 Notion 연동이 정상 작동하는 거예요. 확인 후 삭제하셔도 됩니다."),
+      ]);
+      res.status(200).json({ ok: true, message: "노션 페이지를 확인해보세요." });
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }
@@ -284,7 +483,20 @@ module.exports = async function handler(req, res) {
     };
 
     await redisSet("briefing:latest", payload);
-    res.status(200).json({ ok: true, ...payload });
+
+    // 노션 업데이트는 실패해도 대시보드 데이터 저장에는 영향 없도록 별도 try/catch.
+    let notionResult = { skipped: true, reason: "NOTION_API_KEY/NOTION_PAGE_ID/NOTION_ANCHOR_BLOCK_ID 미설정" };
+    if (NOTION_API_KEY && NOTION_PAGE_ID && NOTION_ANCHOR_BLOCK_ID) {
+      try {
+        await postToNotion(krRaw, usRaw);
+        notionResult = { ok: true };
+      } catch (err) {
+        console.warn("Notion 업데이트 실패:", err);
+        notionResult = { ok: false, error: String(err) };
+      }
+    }
+
+    res.status(200).json({ ok: true, notion: notionResult, ...payload });
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }
