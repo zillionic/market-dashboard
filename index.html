@@ -171,8 +171,11 @@
   .index-row{ display:flex; gap: 14px; margin-bottom: 14px; flex-wrap:wrap; }
   .index-card{
     flex:1; min-width:120px; background: var(--panel-2); border: 1px solid var(--line-soft);
-    border-radius: 8px; padding: 12px 14px;
+    border-radius: 8px; padding: 12px 14px; cursor:pointer;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
   }
+  .index-card:hover{ border-color: var(--gold); }
+  .index-card.active{ border-color: var(--gold); background: rgba(201,162,39,0.08); }
   .index-card .name{ font-size:12px; color:var(--ink-dim); margin-bottom:6px; }
   .index-card .value{ font-size:22px; font-weight:700; letter-spacing:-0.01em; }
   .index-card .delta{ font-size:13px; margin-top:3px; font-weight:600; }
@@ -305,7 +308,7 @@
 
       <div class="index-row" id="kr-index-row"></div>
 
-      <div class="sub">코스피 20거래일 추이</div>
+      <div class="sub" id="kr-trend-label">코스피 20거래일 추이</div>
       <div class="trend-chart" id="kr-trend"></div>
 
       <div class="fx-line" id="kr-breadth"></div>
@@ -336,7 +339,7 @@
 
       <div class="index-row" id="us-index-row"></div>
 
-      <div class="sub">S&amp;P 500 20거래일 추이</div>
+      <div class="sub" id="us-trend-label">S&amp;P 500 20거래일 추이</div>
       <div class="trend-chart" id="us-trend"></div>
 
       <div class="fx-line" id="us-breadth"></div>
@@ -441,7 +444,10 @@
       breadth: "등락 종목 비율 코스피 <span class=\"mono up-kr\">상승 554</span> : <span class=\"mono down-kr\">하락 322</span> · 코스닥 <span class=\"mono up-kr\">상승 808</span> : <span class=\"mono down-kr\">하락 829</span>",
       // 임시 목업(placeholder) — 실제 20거래일 종가가 아니라 차트 미리보기용 예시 데이터입니다.
       // 채택되면 cron-briefing.js에서 매일 종가를 Upstash 리스트에 누적하는 방식으로 교체 예정.
-      history: [6082.15,6105.60,6070.30,6118.90,6095.44,6142.10,6160.75,6130.20,6175.88,6205.40,6190.15,6220.60,6245.90,6215.30,6250.70,6270.44,6240.10,6280.95,6296.38,6258.77],
+      history: {
+        KOSPI:  [6082.15,6105.60,6070.30,6118.90,6095.44,6142.10,6160.75,6130.20,6175.88,6205.40,6190.15,6220.60,6245.90,6215.30,6250.70,6270.44,6240.10,6280.95,6296.38,6258.77],
+        KOSDAQ: [742.30,748.90,739.50,752.10,747.85,758.40,762.15,755.30,765.90,770.44,768.20,775.60,780.15,774.90,782.30,788.75,779.40,792.60,801.67,798.81],
+      },
       sectorsTop: [
         { name:"화학",       pct:4.37, reason:"S-Oil·한화솔루션·OCI홀딩스 등 정유·태양광 소재주 강세가 업종 전체를 견인" },
         { name:"음식료·담배", pct:3.34, reason:"반도체 조정 국면 속 대형지수 부진을 피한 방어주 순환매 유입" },
@@ -466,8 +472,12 @@
         { name:"DOW",     value:"54,036.93", delta:"▲0.28%", cls:"up-us" },
       ],
       breadth: "등락 종목 비율 <span class=\"mono up-us\">상승 336</span> : <span class=\"mono down-us\">하락 167</span>",
-      // 임시 목업(placeholder) — S&P 500 20거래일 예시 데이터 (차트 미리보기용).
-      history: [7420.30,7455.10,7398.75,7480.60,7462.20,7510.85,7495.40,7540.15,7520.90,7565.30,7580.75,7555.20,7600.60,7625.44,7590.10,7640.85,7665.30,7690.55,7709.96,7757.64],
+      // 임시 목업(placeholder) — 20거래일 예시 데이터 (차트 미리보기용).
+      history: {
+        "S&P 500": [7420.30,7455.10,7398.75,7480.60,7462.20,7510.85,7495.40,7540.15,7520.90,7565.30,7580.75,7555.20,7600.60,7625.44,7590.10,7640.85,7665.30,7690.55,7709.96,7757.64],
+        NASDAQ:    [25210.40,25340.80,25180.55,25420.90,25380.20,25510.60,25470.85,25600.30,25560.90,25680.44,25720.15,25650.80,25780.60,25850.25,25790.90,25920.44,25980.70,26120.85,26348.35,26690.62],
+        DOW:       [52710.30,52850.60,52680.90,52920.40,52880.75,53020.15,52980.60,53110.90,53075.30,53220.44,53260.85,53190.60,53340.15,53410.90,53360.44,53500.75,53560.30,53710.85,53885.10,54036.93],
+      },
       sectorsTop: [
         { name:"소재(Basic Materials)", pct:1.71, reason:"금리 하락 기대에 금·은 등 귀금속 및 광산주 강세, 달러 약세도 우호적" },
         { name:"기술(Technology)",      pct:0.63, reason:"소프트웨어 실적 호조에 반등, 대형 기술주 콜옵션 수급도 우호적" },
@@ -746,9 +756,9 @@
     `).join("");
   }
 
-  function renderIndexRow(elId, indices){
+  function renderIndexRow(elId, indices, panel){
     document.getElementById(elId).innerHTML = indices.map(i => `
-      <div class="index-card">
+      <div class="index-card ${selectedTrend[panel] === i.name ? 'active' : ''}" onclick="selectTrendIndex('${panel}','${i.name}')">
         <div class="name">${i.name}</div>
         <div class="value mono">${i.value}</div>
         <div class="delta mono ${i.cls}">${i.delta}</div>
@@ -805,6 +815,23 @@
   }
 
   /* ---------- 추이 차트 (스파크라인) ---------- */
+  const selectedTrend = { kr: "KOSPI", us: "S&P 500" }; // 현재 각 패널에서 클릭으로 선택된 지수
+  const KR_TREND_LABELS = { KOSPI: "코스피", KOSDAQ: "코스닥" };
+
+  function selectTrendIndex(panel, name){
+    selectedTrend[panel] = name;
+    updateTrendChart(panel);
+    renderIndexRow(panel === "kr" ? "kr-index-row" : "us-index-row", DATA[panel].indices, panel);
+  }
+
+  function updateTrendChart(panel){
+    const name = selectedTrend[panel];
+    const history = (DATA[panel].history || {})[name];
+    const label = panel === "kr" ? (KR_TREND_LABELS[name] || name) : name;
+    document.getElementById(`${panel}-trend-label`).textContent = `${label} 20거래일 추이`;
+    renderTrendChart(`${panel}-trend`, history, genBusinessDates("2026-08-07", (history || []).length), "--gold");
+  }
+
   function genBusinessDates(endDateStr, count){
     const dates = [];
     let d = new Date(endDateStr + "T00:00:00");
@@ -892,15 +919,15 @@
 
     renderTicker();
 
-    renderIndexRow("kr-index-row", DATA.kr.indices);
-    renderTrendChart("kr-trend", DATA.kr.history, genBusinessDates("2026-08-07", (DATA.kr.history || []).length), "--gold");
+    renderIndexRow("kr-index-row", DATA.kr.indices, "kr");
+    updateTrendChart("kr");
     document.getElementById("kr-breadth").innerHTML = DATA.kr.breadth;
     document.getElementById("kr-briefing-source").textContent = DATA.kr.briefingSource;
     document.getElementById("kr-briefing").innerHTML = DATA.kr.briefing;
     renderSectorSection("kr-sector-bars", "kr-sector-reasons", DATA.kr.sectorsTop, DATA.kr.sectorsBottom);
 
-    renderIndexRow("us-index-row", DATA.us.indices);
-    renderTrendChart("us-trend", DATA.us.history, genBusinessDates("2026-08-07", (DATA.us.history || []).length), "--gold");
+    renderIndexRow("us-index-row", DATA.us.indices, "us");
+    updateTrendChart("us");
     document.getElementById("us-breadth").innerHTML = DATA.us.breadth;
     document.getElementById("us-briefing-source").textContent = DATA.us.briefingSource;
     document.getElementById("us-briefing").innerHTML = DATA.us.briefing;
