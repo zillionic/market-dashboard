@@ -287,18 +287,31 @@ ${krRaw}
 [해외 시황 원문]
 ${usRaw}
 
-이 내용을 참고해서, 매일 아침 운용팀 회의용으로 정리하는 "시장" 섹션을 작성해주세요. 아래 예시와 정확히 같은 스타일로 써주세요.
+이 내용을 참고해서, 매일 아침 운용팀 회의용으로 정리하는 "시장" 섹션을 작성해주세요. 대시보드용 5줄 요약보다 훨씬 자세하게, 등락 수치 나열이 아니라 "왜 그렇게 움직였는지" 배경과 논리 중심으로 불릿 형태로 작성합니다.
 
-예시:
-**국내(코스피·코스닥)**: 코스피 6,345.53(+0.73%)·코스닥 857.84(+0.39%)로 마감. 개장은 지정학 리스크 심화, 미 국채금리·유가 상승 여파로 약세 출발했으나, 반도체 수출 호조가 확인되며 외국인·기관 동반 순매수에 힘입어 반등. 삼성전자 +4.13%, SK하이닉스 +0.35%로 반도체 대형주가 지수를 견인
+아래 예시 스타일 그대로 작성하세요 (실제 20260812 노트에서 발췌):
 
-**미국(S&P·나스닥·다우)**: S&P500(-0.32%) 7,728.20·나스닥(-0.60%) 26,445.45·다우(-0.34%) 53,791.85로 2거래일 연속 하락. 미-이란 협상 교착으로 유가가 상승, 기술주 중심 매도 압력으로 이어짐
+국내 예시:
+- 개장은 지정학 리스크 심화, 미 국채금리·유가 상승, 뉴욕증시 기술주 약세 여파로 6,240선까지 밀리며 약세 출발
+- 오후 들어 반도체 8월 수출 호조(약 100억 달러, YoY 155%)가 확인되며 메모리 가격 정점 통과 우려가 일부 완화
+- 외국인·기관 동반 순매수(각각 446억·319억 원)에 힘입어 6,300선 재탈환, 개인은 724억 원 순매도
+- 삼성전자 +4.13%, SK하이닉스 +0.35%로 반도체 대형주가 지수 견인
+- 전일 급등했던 코스닥은 차익실현 매물에 상승폭 크게 둔화(+0.39%)
+
+해외 예시:
+- 미-이란 간 호르무즈 해협 재개 협상이 교착 국면에 빠지며(이란, 미군 철수·손해배상 요구) 유가가 배럴당 83달러 상회
+- 유가 상승이 기술주 중심 매도 압력으로 이어지며 지수 2거래일 연속 하락
+- 알파벳이 -2.9~3.6%대 급락하며 지수 낙폭 확대, 온홀딩은 실적 부진 가이던스로 20% 넘게 폭락
+- 다음날 예정된 CPI 발표를 앞두고 리스크 회피 심리 부각
+- 다만 샌디스크·SK하이닉스 ADR 등 메모리업체는 반등, 코어위브는 컨센서스 상회 실적에 애프터마켓 14% 상승
 
 규칙:
-- 개조식(명사형 종결)으로 작성, "~습니다/~했다" 같은 종결어미 쓰지 않기
-- 국내/해외 각각 굵게(**국내(코스피·코스닥)**, **미국(S&P·나스닥·다우)**)로 시작하는 한 문단씩
-- 지수 수치와 등락률이 원문에 있으면 반드시 포함
-- 다른 설명 없이 결과 텍스트만 출력 (마크다운 코드블록 금지)`;
+- 개조식(명사형 종결), 각 불릿은 "왜 그런 흐름이 나왔는지" 인과관계·배경 설명 중심 (단순 "OO +X%" 나열 금지, 반드시 이유·맥락과 함께 서술)
+- 등락 수치는 배경 설명을 뒷받침하는 용도로만 포함 (수치 자체가 불릿의 핵심이 되지 않게)
+- 국내 5~7개, 해외 5~7개 불릿 정도로, 대시보드 5줄 요약보다 확실히 더 상세하게
+- 원문에 없는 내용은 지어내지 말 것
+- 아래 JSON 형식으로만 출력 (다른 설명, 마크다운 코드블록 금지):
+{"kr": ["불릿1", "불릿2", ...], "us": ["불릿1", "불릿2", ...]}`;
 
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -309,7 +322,7 @@ ${usRaw}
     },
     body: JSON.stringify({
       model: "claude-sonnet-5",
-      max_tokens: 1000,
+      max_tokens: 1500,
       messages: [{ role: "user", content: prompt }],
     }),
   });
@@ -317,7 +330,8 @@ ${usRaw}
   const json = await res.json();
   const textBlock = (json.content || []).find((c) => c.type === "text");
   if (!textBlock) throw new Error("Claude 응답(시장 섹션)에서 텍스트를 찾지 못했습니다.");
-  return textBlock.text.trim();
+  const cleaned = textBlock.text.trim().replace(/^```json\s*|^```\s*|```$/g, "");
+  return JSON.parse(cleaned); // { kr: [...], us: [...] }
 }
 
 // "개별 종목 및 이슈" 불릿 리스트 — 원문에 언급된 종목별 실적·공시·뉴스만 추립니다.
@@ -377,13 +391,17 @@ async function postToNotion(krRaw, usRaw) {
     generateStockNewsSection(krRaw, usRaw),
   ]);
 
-  const marketParagraphs = marketSection.split("\n").filter((l) => l.trim()).map(paragraph);
+  const krBullets = (marketSection.kr || []).map(bullet);
+  const usBullets = (marketSection.us || []).map(bullet);
   const stockBullets = stockNews.length ? stockNews.map(bullet) : [bullet("(오늘은 원문에서 종목별 이슈를 찾지 못했습니다)")];
 
   const children = [
     heading2(todayKSTCompact()),
     heading3("시장"),
-    ...marketParagraphs,
+    paragraph("**국내(코스피·코스닥)**"),
+    ...krBullets,
+    paragraph("**미국(S&P·나스닥·다우)**"),
+    ...usBullets,
     heading3("개별 종목 및 이슈"),
     ...stockBullets,
     heading3("일정"),
@@ -401,6 +419,22 @@ module.exports = async function handler(req, res) {
     try {
       const result = await fetchUsSectorIndices();
       res.status(200).json(result);
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+    return;
+  }
+
+  // 진단용: ?debugMarket=1 로 호출하면 새 "시장" 섹션 형식만 미리 확인합니다.
+  // (Claude 호출은 발생하지만 노션에는 올리지 않습니다 — 형식 검증용.)
+  if (req.query.debugMarket) {
+    try {
+      const [krRaw, usRaw] = await Promise.all([
+        fetchLatestPost("shStrategy"),
+        fetchLatestPost("ehdwl"),
+      ]);
+      const marketSection = await generateMarketSection(krRaw, usRaw);
+      res.status(200).json(marketSection);
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }
