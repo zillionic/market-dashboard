@@ -157,6 +157,23 @@
   .up-us{ color: var(--us-up); }
   .down-us{ color: var(--us-down); }
 
+  /* ---------- macro calendar (다음 7일) ---------- */
+  .macro-calendar{
+    border: 1px solid var(--line); background: var(--panel);
+    border-radius: 8px; padding: 16px 20px; margin-bottom: 26px;
+  }
+  .macro-cal-head{ margin-bottom: 12px; }
+  .macro-cal-head h2{ font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
+  .macro-cal-list{ display:flex; flex-wrap:wrap; gap: 10px; }
+  .macro-cal-item{
+    display:flex; align-items:baseline; gap: 8px;
+    background: var(--panel-2); border: 1px solid var(--line-soft);
+    border-radius: 8px; padding: 7px 12px; font-size: 12.5px;
+  }
+  .macro-cal-item .date{ font-family:'JetBrains Mono', monospace; color: var(--gold); font-weight:700; white-space:nowrap; }
+  .macro-cal-item .name{ color: var(--ink); }
+  .macro-cal-empty{ color: var(--ink-faint); font-size: 12.5px; }
+
   /* ---------- grid ---------- */
   .grid{ display:grid; grid-template-columns: 1fr 1fr; gap: 18px; }
   @media (max-width: 860px){ .grid{ grid-template-columns: 1fr; } }
@@ -299,6 +316,14 @@
 
   <section class="ticker" id="ticker"></section>
 
+  <section class="macro-calendar" id="macroCalendar">
+    <div class="macro-cal-head">
+      <span class="eyebrow">Macro Calendar</span>
+      <h2>이번 주 매크로 일정</h2>
+    </div>
+    <div class="macro-cal-list" id="macroCalList"></div>
+  </section>
+
   <main class="grid">
 
     <section class="panel">
@@ -431,6 +456,8 @@
      ============================================================ */
   const DATA = {
     updatedAt: "2026-08-07 15:30 KST · 국내·미국 정규장 마감 기준",
+    // cron-briefing.js가 FRED에서 매일 가져와 Upstash에 쌓아둔 값으로 fetchLiveData()가 채웁니다.
+    macroCalendar: [],
     ticker: [
       { name:"KOSPI",   value:"6,258.77",   delta:"▼37.61 (-0.60%)", cls:"down-kr" },
       { name:"KOSDAQ",  value:"798.81",     delta:"▼2.86 (-0.36%)",  cls:"down-kr" },
@@ -511,6 +538,7 @@
   const BRIEFING_API = "/api/briefing";
   const KR_SECTOR_REASONS_API = "/api/kr-sector-reasons";
   const HISTORY_API = "/api/history";
+  const MACRO_CALENDAR_API = "/api/macro-calendar";
 
   function fmtNum(n, digits = 2){
     return n.toLocaleString("ko-KR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
@@ -753,6 +781,19 @@
       console.warn("지수 추이 히스토리 실시간 연동 실패:", err);
     }
 
+    // ---- [매크로 캘린더] cron이 FRED에서 매일 가져와 쌓아둔 다음 7일 발표 일정을 읽어옵니다 ----
+    try {
+      const res = await fetch(MACRO_CALENDAR_API, { cache: "no-store" });
+      if (res.ok) {
+        const j = await res.json();
+        if (Array.isArray(j.events)) DATA.macroCalendar = j.events;
+      } else {
+        console.warn("macro-calendar API 응답 실패:", res.status);
+      }
+    } catch (err) {
+      console.warn("매크로 캘린더 실시간 연동 실패:", err);
+    }
+
     // ---- [해외 업종 등락률] Finviz — 공식 무료 API는 없음(Elite 구독형, finviz.com/elite). ----
     // 브라우저에서 finviz.com/groups?g=sector&v=140 를 매일 열어서 옮기는 게 현재 방식.
     // 자동화하려면 완전 무료 대안으로 섹터 ETF(XLB·XLK·XLRE·XLI·XLV·XLY·XLU·XLF·XLP·XLC·XLE) 일별 종가를
@@ -769,6 +810,27 @@
         <span class="name">${t.name}</span>
         <span class="val mono">${t.value}</span>
         <span class="delta mono ${t.cls}">${t.delta}</span>
+      </div>
+    `).join("");
+  }
+
+  function formatShortKoreanDate(iso){
+    const dow = ['일','월','화','수','목','금','토'];
+    const d = new Date(iso + "T00:00:00");
+    return `${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}(${dow[d.getDay()]})`;
+  }
+
+  function renderMacroCalendar(events){
+    const el = document.getElementById("macroCalList");
+    if(!el) return;
+    if(!Array.isArray(events) || events.length === 0){
+      el.innerHTML = `<div class="macro-cal-empty">이번 주 예정된 주요 발표가 없습니다.</div>`;
+      return;
+    }
+    el.innerHTML = events.map(e => `
+      <div class="macro-cal-item">
+        <span class="date mono">${formatShortKoreanDate(e.date)}</span>
+        <span class="name">${e.name}</span>
       </div>
     `).join("");
   }
@@ -930,6 +992,7 @@
     badge.className = "badge " + (USE_LIVE_API ? "live" : "snapshot");
 
     renderTicker();
+    renderMacroCalendar(DATA.macroCalendar);
 
     renderIndexRow("kr-index-row", DATA.kr.indices, "kr");
     updateTrendChart("kr");

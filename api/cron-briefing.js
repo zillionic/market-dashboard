@@ -17,6 +17,8 @@
 //   NOTION_PAGE_ID              - 노션 페이지 URL의 32자리 ID 부분
 //   NOTION_ANCHOR_BLOCK_ID      - 페이지 맨 위에 만들어둔 구분선 블록의 ID
 //                                 (이 셋 중 하나라도 없으면 노션 업데이트는 조용히 건너뜁니다)
+//   FRED_API_KEY                - fred.stlouisfed.org/docs/api/api_key.html 에서 무료 발급
+//                                 (없으면 매크로 캘린더 갱신만 조용히 건너뜁니다)
 //
 // 휴일 처리: 오늘이 한국 기준 토/일이면 아무 것도 안 하고 종료합니다.
 // Upstash에 저장된 값(가장 최근 평일 요약)이 그대로 유지되므로,
@@ -81,6 +83,70 @@ async function fetchIndexCloses() {
   if (!krRes.ok) throw new Error(`kr-indices 조회 실패: ${krRes.status}`);
   if (!usRes.ok) throw new Error(`us-indices 조회 실패: ${usRes.status}`);
   return { kr: await krRes.json(), us: await usRes.json() };
+}
+
+// ============================================================================
+// 매크로 캘린더 — FRED(세인트루이스 연준)의 공식 발표 일정 API에서 다음 7일치를
+// 가져옵니다. FRED는 500개가 넘는 release를 관리해서 그대로 쓰면 지엽적인
+// 발표까지 다 뜨므로, 시장에 영향이 큰 지표 위주로 이름을 필터링합니다.
+// ============================================================================
+const FRED_API_KEY = process.env.FRED_API_KEY;
+
+// release_name에 아래 키워드가 포함된 것만 통과시킵니다 (대소문자 무관).
+// 새로운 지표를 더 보고 싶으면 이 목록에 키워드만 추가하면 됩니다.
+const MACRO_RELEASE_KEYWORDS = [
+  "Employment Situation",
+  "Consumer Price Index",
+  "Producer Price Index",
+  "Personal Income and Outlays",
+  "Advance Monthly Sales for Retail",
+  "Gross Domestic Product",
+  "Industrial Production",
+  "Housing Starts",
+  "Existing Home Sales",
+  "New Residential Sales",
+  "Consumer Confidence",
+  "ISM",
+  "H.15 Selected Interest Rates",
+  "FOMC",
+];
+
+function nyDateStr(offsetDays = 0) {
+  const d = new Date();
+  d.setDate(d.getDate() + offsetDays);
+  return d.toLocaleDateString("en-CA", { timeZone: "America/New_York" }); // "YYYY-MM-DD"
+}
+
+async function fetchMacroCalendar() {
+  if (!FRED_API_KEY) return [];
+
+  const realtimeStart = nyDateStr(0);
+  const realtimeEnd = nyDateStr(7);
+  const url = `https://api.stlouisfed.org/fred/releases/dates?api_key=${FRED_API_KEY}&file_type=json` +
+    `&realtime_start=${realtimeStart}&realtime_end=${realtimeEnd}` +
+    `&include_release_dates_with_no_data=true&sort_order=asc&limit=1000`;
+
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`FRED API 오류 (${res.status}): ${await res.text().catch(() => "")}`);
+  const json = await res.json();
+  const rows = json.release_dates || [];
+
+  const kwLower = MACRO_RELEASE_KEYWORDS.map((k) => k.toLowerCase());
+  const filtered = rows.filter((r) =>
+    kwLower.some((kw) => (r.release_name || "").toLowerCase().includes(kw))
+  );
+
+  // 같은 release가 같은 날 중복으로 들어오는 경우가 있어 (date+name) 기준으로 dedup.
+  const seen = new Set();
+  const events = [];
+  for (const r of filtered) {
+    const key = `${r.date}|${r.release_name}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    events.push({ date: r.date, name: r.release_name });
+  }
+  events.sort((a, b) => a.date.localeCompare(b.date));
+  return events;
 }
 
 // t.me/s/{channel} 미리보기 페이지에서 메시지 텍스트를 대략 추출합니다.
@@ -568,6 +634,18 @@ module.exports = async function handler(req, res) {
     return;
   }
 
+  // 진단용: ?debugMacro=1 로 호출하면 FRED에서 가져온 다음 7일 매크로 일정만 확인합니다
+  // (Upstash에 쓰지 않음, FRED_API_KEY 미설정이면 빈 배열이 정상입니다).
+  if (req.query.debugMacro) {
+    try {
+      const events = await fetchMacroCalendar();
+      res.status(200).json({ hasApiKey: !!FRED_API_KEY, events });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+    return;
+  }
+
   // Vercel Cron 검증 (CRON_SECRET을 설정한 경우에만 강제)
   const auth = req.headers.authorization;
   if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -624,6 +702,14 @@ module.exports = async function handler(req, res) {
       ]);
     } catch (err) {
       console.warn("지수 히스토리 누적 실패, 이 부분만 건너뜁니다:", err);
+    }
+
+    // 매크로 캘린더 갱신 (대시보드 "이번 주 매크로 일정" 용) — FRED_API_KEY 없으면 조용히 건너뜁니다.
+    try {
+      const events = await fetchMacroCalendar();
+      await redisSet("macro:calendar", events);
+    } catch (err) {
+      console.warn("매크로 캘린더 갱신 실패, 이 부분만 건너뜁니다:", err);
     }
 
     const payload = {
