@@ -197,6 +197,10 @@
     box-shadow: 0 4px 10px rgba(0,0,0,0.25);
   }
   .trend-tooltip .d{ color: var(--ink-faint); font-size:10px; margin-bottom:2px; }
+  .trend-empty{
+    height:88px; display:flex; align-items:center; justify-content:center;
+    color: var(--ink-faint); font-size:12.5px; text-align:center; padding:0 16px;
+  }
 
   .divider{ height:1px; background: var(--line-soft); margin: 16px 0; }
 
@@ -420,22 +424,6 @@
     }
   }
 
-  // 목업 추이 데이터에 날짜를 붙이는 유틸 (실제 히스토리 API 응답과 같은 {date, close} 형태로 맞춤)
-  function genBusinessDates(endDateStr, count){
-    const dates = [];
-    let d = new Date(endDateStr + "T00:00:00");
-    while(dates.length < count){
-      const day = d.getDay();
-      if(day !== 0 && day !== 6) dates.unshift(new Date(d));
-      d.setDate(d.getDate() - 1);
-    }
-    return dates.map(dt => `${String(dt.getMonth()+1).padStart(2,'0')}.${String(dt.getDate()).padStart(2,'0')}`);
-  }
-  function mockHistory(values, endDateStr){
-    const dates = genBusinessDates(endDateStr, values.length);
-    return values.map((close, i) => ({ date: dates[i], close }));
-  }
-
   /* ============================================================
      1. 일일 스냅샷 데이터
      -> 매일 아침 이 블록만 최신 시황으로 교체하고 다시 배포하면 됩니다.
@@ -458,12 +446,9 @@
       ],
       fx: "원/달러 환율 <span class=\"mono\">1,416.10원</span> (전일比 <span class=\"mono down-kr\">▼7.70원</span>)",
       breadth: "등락 종목 비율 코스피 <span class=\"mono up-kr\">상승 554</span> : <span class=\"mono down-kr\">하락 322</span> · 코스닥 <span class=\"mono up-kr\">상승 808</span> : <span class=\"mono down-kr\">하락 829</span>",
-      // 임시 목업(placeholder) — 실제 20거래일 종가가 아니라 차트 미리보기용 예시 데이터입니다.
-      // /api/history에 실제 데이터가 20일치 쌓이기 전까지만 이 값이 쓰입니다 (fetchLiveData 참고).
-      history: {
-        KOSPI:  mockHistory([6082.15,6105.60,6070.30,6118.90,6095.44,6142.10,6160.75,6130.20,6175.88,6205.40,6190.15,6220.60,6245.90,6215.30,6250.70,6270.44,6240.10,6280.95,6296.38,6258.77], "2026-08-07"),
-        KOSDAQ: mockHistory([742.30,748.90,739.50,752.10,747.85,758.40,762.15,755.30,765.90,770.44,768.20,775.60,780.15,774.90,782.30,788.75,779.40,792.60,801.67,798.81], "2026-08-07"),
-      },
+      // cron-briefing.js가 매일 Upstash에 쌓는 실제 종가로 fetchLiveData()가 채웁니다.
+      // 20거래일이 다 쌓이기 전까지는 그만큼만 짧게 표시됩니다.
+      history: { KOSPI: [], KOSDAQ: [] },
       sectorsTop: [
         { name:"화학",       pct:4.37, reason:"S-Oil·한화솔루션·OCI홀딩스 등 정유·태양광 소재주 강세가 업종 전체를 견인" },
         { name:"음식료·담배", pct:3.34, reason:"반도체 조정 국면 속 대형지수 부진을 피한 방어주 순환매 유입" },
@@ -488,12 +473,8 @@
         { name:"DOW",     value:"54,036.93", delta:"▲0.28%", cls:"up-us" },
       ],
       breadth: "등락 종목 비율 <span class=\"mono up-us\">상승 336</span> : <span class=\"mono down-us\">하락 167</span>",
-      // 임시 목업(placeholder) — /api/history에 실제 데이터가 쌓이기 전까지만 쓰입니다.
-      history: {
-        "S&P 500": mockHistory([7420.30,7455.10,7398.75,7480.60,7462.20,7510.85,7495.40,7540.15,7520.90,7565.30,7580.75,7555.20,7600.60,7625.44,7590.10,7640.85,7665.30,7690.55,7709.96,7757.64], "2026-08-07"),
-        NASDAQ:    mockHistory([25210.40,25340.80,25180.55,25420.90,25380.20,25510.60,25470.85,25600.30,25560.90,25680.44,25720.15,25650.80,25780.60,25850.25,25790.90,25920.44,25980.70,26120.85,26348.35,26690.62], "2026-08-07"),
-        DOW:       mockHistory([52710.30,52850.60,52680.90,52920.40,52880.75,53020.15,52980.60,53110.90,53075.30,53220.44,53260.85,53190.60,53340.15,53410.90,53360.44,53500.75,53560.30,53710.85,53885.10,54036.93], "2026-08-07"),
-      },
+      // cron-briefing.js가 매일 Upstash에 쌓는 실제 종가로 fetchLiveData()가 채웁니다.
+      history: { "S&P 500": [], NASDAQ: [], DOW: [] },
       sectorsTop: [
         { name:"소재(Basic Materials)", pct:1.71, reason:"금리 하락 기대에 금·은 등 귀금속 및 광산주 강세, 달러 약세도 우호적" },
         { name:"기술(Technology)",      pct:0.63, reason:"소프트웨어 실적 호조에 반등, 대형 기술주 콜옵션 수급도 우호적" },
@@ -754,22 +735,22 @@
     }
 
     // ---- [지수 추이 히스토리] cron이 매일 쌓아둔 실제 종가 기록을 읽어옵니다 ----
-    // 지수별로 아직 2일치도 안 쌓였으면(캐시 초기 상태) 그 지수만 목업 값을 그대로 유지합니다.
+    // 20거래일이 다 쌓이기 전까지는 그만큼만 짧게 표시됩니다 (목업으로 채우지 않음).
     try {
       const res = await fetch(HISTORY_API, { cache: "no-store" });
       if (res.ok) {
         const hist = await res.json();
         Object.keys(DATA.kr.history).forEach((name) => {
-          if (Array.isArray(hist[name]) && hist[name].length >= 2) DATA.kr.history[name] = hist[name];
+          if (Array.isArray(hist[name])) DATA.kr.history[name] = hist[name];
         });
         Object.keys(DATA.us.history).forEach((name) => {
-          if (Array.isArray(hist[name]) && hist[name].length >= 2) DATA.us.history[name] = hist[name];
+          if (Array.isArray(hist[name])) DATA.us.history[name] = hist[name];
         });
       } else {
         console.warn("history API 응답 실패:", res.status);
       }
     } catch (err) {
-      console.warn("지수 추이 히스토리 실시간 연동 실패, 목업 값을 유지합니다:", err);
+      console.warn("지수 추이 히스토리 실시간 연동 실패:", err);
     }
 
     // ---- [해외 업종 등락률] Finviz — 공식 무료 API는 없음(Elite 구독형, finviz.com/elite). ----
@@ -864,17 +845,21 @@
     const name = selectedTrend[panel];
     const history = (DATA[panel].history || {})[name] || [];
     const label = panel === "kr" ? (KR_TREND_LABELS[name] || name) : name;
-    document.getElementById(`${panel}-trend-label`).textContent = `${label} ${history.length}거래일 추이`;
+    document.getElementById(`${panel}-trend-label`).textContent =
+      history.length >= 2 ? `${label} ${history.length}거래일 추이` : `${label} 추이 (데이터 쌓는 중)`;
     renderTrendChart(`${panel}-trend`, history, "--gold");
   }
 
   function renderTrendChart(elId, history, colorVar){
     const el = document.getElementById(elId);
     if(!el) return;
-    if(!Array.isArray(history) || history.length < 2){ el.innerHTML = ""; return; }
+    if(!Array.isArray(history) || history.length < 2){
+      el.innerHTML = `<div class="trend-empty">아직 쌓인 거래일이 ${history.length}일뿐이라 차트를 그릴 수 없습니다. 매일 조금씩 채워집니다.</div>`;
+      return;
+    }
 
     const values = history.map(h => h.close);
-    const dates = history.map(h => h.date);
+    const dates = history.map(h => h.date.length === 10 ? h.date.slice(5).replace('-', '.') : h.date); // "YYYY-MM-DD" -> "MM.DD"
     const W = 600, H = 88, padTop = 14, padBottom = 20, padX = 4;
     const plotH = H - padTop - padBottom;
     const n = values.length;

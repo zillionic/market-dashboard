@@ -53,7 +53,7 @@ async function redisGet(key) {
 // ============================================================================
 // 지수 추이 히스토리 — 대시보드 스파크라인용으로 매일 종가를 누적 저장합니다
 // ============================================================================
-const HISTORY_MAX_DAYS = 30;
+const HISTORY_MAX_DAYS = 20;
 
 // 같은 날짜로 다시 실행되면(재시도 등) 새 값으로 덮어쓰고 중복 추가하지 않습니다.
 async function appendIndexHistory(historyKey, dateStr, close) {
