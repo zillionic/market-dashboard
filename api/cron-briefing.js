@@ -41,6 +41,48 @@ async function redisSet(key, valueObj) {
   }
 }
 
+async function redisGet(key) {
+  const res = await fetch(`${UPSTASH_URL}/get/${encodeURIComponent(key)}`, {
+    headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` },
+  });
+  if (!res.ok) throw new Error(`Upstash 조회 실패 (${key}, ${res.status})`);
+  const json = await res.json();
+  return json.result ? JSON.parse(json.result) : null;
+}
+
+// ============================================================================
+// 지수 추이 히스토리 — 대시보드 스파크라인용으로 매일 종가를 누적 저장합니다
+// ============================================================================
+const HISTORY_MAX_DAYS = 30;
+
+// 같은 날짜로 다시 실행되면(재시도 등) 새 값으로 덮어쓰고 중복 추가하지 않습니다.
+async function appendIndexHistory(historyKey, dateStr, close) {
+  if (!dateStr || !Number.isFinite(close)) return;
+  let history = [];
+  try {
+    history = (await redisGet(`history:${historyKey}`)) || [];
+  } catch (err) {
+    console.warn(`히스토리 조회 실패 (${historyKey}), 빈 배열로 새로 시작:`, err);
+  }
+  const idx = history.findIndex((h) => h.date === dateStr);
+  if (idx >= 0) history[idx] = { date: dateStr, close };
+  else history.push({ date: dateStr, close });
+  history = history.slice(-HISTORY_MAX_DAYS);
+  await redisSet(`history:${historyKey}`, history);
+}
+
+// 같은 배포 안의 지수 API를 재사용해서 오늘자 종가를 가져옵니다.
+async function fetchIndexCloses() {
+  const base = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "";
+  const [krRes, usRes] = await Promise.all([
+    fetch(`${base}/api/kr-indices`),
+    fetch(`${base}/api/us-indices`),
+  ]);
+  if (!krRes.ok) throw new Error(`kr-indices 조회 실패: ${krRes.status}`);
+  if (!usRes.ok) throw new Error(`us-indices 조회 실패: ${usRes.status}`);
+  return { kr: await krRes.json(), us: await usRes.json() };
+}
+
 // t.me/s/{channel} 미리보기 페이지에서 메시지 텍스트를 대략 추출합니다.
 // ⚠️ 텔레그램이 페이지 구조를 바꾸면 이 정규식도 손봐야 할 수 있습니다.
 //
@@ -512,6 +554,20 @@ module.exports = async function handler(req, res) {
     return;
   }
 
+  // 진단용: ?debugHistory=1 로 호출하면 오늘자 지수 종가 조회만 확인합니다 (Upstash에 쓰지 않음, 비용 없음).
+  if (req.query.debugHistory) {
+    try {
+      const { kr, us } = await fetchIndexCloses();
+      res.status(200).json({
+        kr: { asOfDate: kr.asOfDate, kospi: kr.kospi, kosdaq: kr.kosdaq },
+        us: { asOfDate: us.asOfDate, sp500: us.sp500, nasdaq: us.nasdaq, dow: us.dow },
+      });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+    return;
+  }
+
   // Vercel Cron 검증 (CRON_SECRET을 설정한 경우에만 강제)
   const auth = req.headers.authorization;
   if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -554,6 +610,20 @@ module.exports = async function handler(req, res) {
       usSectorsBottom = bottom5.map(s => ({ ...s, reason: reasonMap[s.name] || "" }));
     } catch (err) {
       console.warn("해외 업종 데이터/이유 생성 실패, 이 부분만 건너뜁니다:", err);
+    }
+
+    // 지수 종가 히스토리 누적 (대시보드 추이 차트용) — 실패해도 나머지 저장에는 영향 없도록 별도 처리.
+    try {
+      const { kr, us } = await fetchIndexCloses();
+      await Promise.all([
+        appendIndexHistory("KOSPI", kr.asOfDate, kr.kospi?.close),
+        appendIndexHistory("KOSDAQ", kr.asOfDate, kr.kosdaq?.close),
+        appendIndexHistory("SP500", us.asOfDate, us.sp500?.close),
+        appendIndexHistory("NASDAQ", us.asOfDate, us.nasdaq?.close),
+        appendIndexHistory("DOW", us.asOfDate, us.dow?.close),
+      ]);
+    } catch (err) {
+      console.warn("지수 히스토리 누적 실패, 이 부분만 건너뜁니다:", err);
     }
 
     const payload = {

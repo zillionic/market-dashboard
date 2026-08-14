@@ -171,14 +171,32 @@
   .index-row{ display:flex; gap: 14px; margin-bottom: 14px; flex-wrap:wrap; }
   .index-card{
     flex:1; min-width:120px; background: var(--panel-2); border: 1px solid var(--line-soft);
-    border-radius: 8px; padding: 12px 14px;
+    border-radius: 8px; padding: 12px 14px; cursor:pointer;
+    transition: border-color 0.15s ease, background-color 0.15s ease;
   }
+  .index-card:hover{ border-color: var(--gold); }
+  .index-card.active{ border-color: var(--gold); background: rgba(201,162,39,0.08); }
   .index-card .name{ font-size:12px; color:var(--ink-dim); margin-bottom:6px; }
   .index-card .value{ font-size:22px; font-weight:700; letter-spacing:-0.01em; }
   .index-card .delta{ font-size:13px; margin-top:3px; font-weight:600; }
 
   .fx-line{ font-size: 13px; color: var(--ink-dim); margin-bottom: 16px; }
   .fx-line .mono{ color: var(--ink); }
+
+  /* ---------- trend chart (sparkline) ---------- */
+  .trend-chart{ position:relative; margin-bottom: 16px; }
+  .trend-chart svg{ display:block; width:100%; height:88px; overflow:visible; }
+  .trend-chart .trend-crosshair{ stroke: var(--ink-faint); stroke-width:1; opacity:0; pointer-events:none; }
+  .trend-chart .trend-dot{ opacity:0; pointer-events:none; }
+  .trend-chart .trend-axislabel{ font-family:'JetBrains Mono', monospace; font-size:10px; fill: var(--ink-faint); }
+  .trend-tooltip{
+    position:absolute; pointer-events:none; opacity:0; transform:translate(-50%,-100%);
+    background: var(--panel-2); border:1px solid var(--line); border-radius:6px;
+    padding:6px 9px; font-family:'JetBrains Mono', monospace; font-size:11.5px;
+    color: var(--ink); white-space:nowrap; z-index:5; transition:opacity 0.1s ease;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.25);
+  }
+  .trend-tooltip .d{ color: var(--ink-faint); font-size:10px; margin-bottom:2px; }
 
   .divider{ height:1px; background: var(--line-soft); margin: 16px 0; }
 
@@ -289,6 +307,10 @@
       </div>
 
       <div class="index-row" id="kr-index-row"></div>
+
+      <div class="sub" id="kr-trend-label">코스피 20거래일 추이</div>
+      <div class="trend-chart" id="kr-trend"></div>
+
       <div class="fx-line" id="kr-breadth"></div>
 
       <div class="briefing briefing-top">
@@ -316,6 +338,10 @@
       </div>
 
       <div class="index-row" id="us-index-row"></div>
+
+      <div class="sub" id="us-trend-label">S&amp;P 500 20거래일 추이</div>
+      <div class="trend-chart" id="us-trend"></div>
+
       <div class="fx-line" id="us-breadth"></div>
 
       <div class="briefing briefing-top">
@@ -394,6 +420,22 @@
     }
   }
 
+  // 목업 추이 데이터에 날짜를 붙이는 유틸 (실제 히스토리 API 응답과 같은 {date, close} 형태로 맞춤)
+  function genBusinessDates(endDateStr, count){
+    const dates = [];
+    let d = new Date(endDateStr + "T00:00:00");
+    while(dates.length < count){
+      const day = d.getDay();
+      if(day !== 0 && day !== 6) dates.unshift(new Date(d));
+      d.setDate(d.getDate() - 1);
+    }
+    return dates.map(dt => `${String(dt.getMonth()+1).padStart(2,'0')}.${String(dt.getDate()).padStart(2,'0')}`);
+  }
+  function mockHistory(values, endDateStr){
+    const dates = genBusinessDates(endDateStr, values.length);
+    return values.map((close, i) => ({ date: dates[i], close }));
+  }
+
   /* ============================================================
      1. 일일 스냅샷 데이터
      -> 매일 아침 이 블록만 최신 시황으로 교체하고 다시 배포하면 됩니다.
@@ -416,6 +458,12 @@
       ],
       fx: "원/달러 환율 <span class=\"mono\">1,416.10원</span> (전일比 <span class=\"mono down-kr\">▼7.70원</span>)",
       breadth: "등락 종목 비율 코스피 <span class=\"mono up-kr\">상승 554</span> : <span class=\"mono down-kr\">하락 322</span> · 코스닥 <span class=\"mono up-kr\">상승 808</span> : <span class=\"mono down-kr\">하락 829</span>",
+      // 임시 목업(placeholder) — 실제 20거래일 종가가 아니라 차트 미리보기용 예시 데이터입니다.
+      // /api/history에 실제 데이터가 20일치 쌓이기 전까지만 이 값이 쓰입니다 (fetchLiveData 참고).
+      history: {
+        KOSPI:  mockHistory([6082.15,6105.60,6070.30,6118.90,6095.44,6142.10,6160.75,6130.20,6175.88,6205.40,6190.15,6220.60,6245.90,6215.30,6250.70,6270.44,6240.10,6280.95,6296.38,6258.77], "2026-08-07"),
+        KOSDAQ: mockHistory([742.30,748.90,739.50,752.10,747.85,758.40,762.15,755.30,765.90,770.44,768.20,775.60,780.15,774.90,782.30,788.75,779.40,792.60,801.67,798.81], "2026-08-07"),
+      },
       sectorsTop: [
         { name:"화학",       pct:4.37, reason:"S-Oil·한화솔루션·OCI홀딩스 등 정유·태양광 소재주 강세가 업종 전체를 견인" },
         { name:"음식료·담배", pct:3.34, reason:"반도체 조정 국면 속 대형지수 부진을 피한 방어주 순환매 유입" },
@@ -440,6 +488,12 @@
         { name:"DOW",     value:"54,036.93", delta:"▲0.28%", cls:"up-us" },
       ],
       breadth: "등락 종목 비율 <span class=\"mono up-us\">상승 336</span> : <span class=\"mono down-us\">하락 167</span>",
+      // 임시 목업(placeholder) — /api/history에 실제 데이터가 쌓이기 전까지만 쓰입니다.
+      history: {
+        "S&P 500": mockHistory([7420.30,7455.10,7398.75,7480.60,7462.20,7510.85,7495.40,7540.15,7520.90,7565.30,7580.75,7555.20,7600.60,7625.44,7590.10,7640.85,7665.30,7690.55,7709.96,7757.64], "2026-08-07"),
+        NASDAQ:    mockHistory([25210.40,25340.80,25180.55,25420.90,25380.20,25510.60,25470.85,25600.30,25560.90,25680.44,25720.15,25650.80,25780.60,25850.25,25790.90,25920.44,25980.70,26120.85,26348.35,26690.62], "2026-08-07"),
+        DOW:       mockHistory([52710.30,52850.60,52680.90,52920.40,52880.75,53020.15,52980.60,53110.90,53075.30,53220.44,53260.85,53190.60,53340.15,53410.90,53360.44,53500.75,53560.30,53710.85,53885.10,54036.93], "2026-08-07"),
+      },
       sectorsTop: [
         { name:"소재(Basic Materials)", pct:1.71, reason:"금리 하락 기대에 금·은 등 귀금속 및 광산주 강세, 달러 약세도 우호적" },
         { name:"기술(Technology)",      pct:0.63, reason:"소프트웨어 실적 호조에 반등, 대형 기술주 콜옵션 수급도 우호적" },
@@ -475,6 +529,7 @@
   const US_INDICES_API = "/api/us-indices";
   const BRIEFING_API = "/api/briefing";
   const KR_SECTOR_REASONS_API = "/api/kr-sector-reasons";
+  const HISTORY_API = "/api/history";
 
   function fmtNum(n, digits = 2){
     return n.toLocaleString("ko-KR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
@@ -698,6 +753,25 @@
       console.warn("업종 이유 온디맨드 보완 실패, 기존 값을 유지합니다:", err);
     }
 
+    // ---- [지수 추이 히스토리] cron이 매일 쌓아둔 실제 종가 기록을 읽어옵니다 ----
+    // 지수별로 아직 2일치도 안 쌓였으면(캐시 초기 상태) 그 지수만 목업 값을 그대로 유지합니다.
+    try {
+      const res = await fetch(HISTORY_API, { cache: "no-store" });
+      if (res.ok) {
+        const hist = await res.json();
+        Object.keys(DATA.kr.history).forEach((name) => {
+          if (Array.isArray(hist[name]) && hist[name].length >= 2) DATA.kr.history[name] = hist[name];
+        });
+        Object.keys(DATA.us.history).forEach((name) => {
+          if (Array.isArray(hist[name]) && hist[name].length >= 2) DATA.us.history[name] = hist[name];
+        });
+      } else {
+        console.warn("history API 응답 실패:", res.status);
+      }
+    } catch (err) {
+      console.warn("지수 추이 히스토리 실시간 연동 실패, 목업 값을 유지합니다:", err);
+    }
+
     // ---- [해외 업종 등락률] Finviz — 공식 무료 API는 없음(Elite 구독형, finviz.com/elite). ----
     // 브라우저에서 finviz.com/groups?g=sector&v=140 를 매일 열어서 옮기는 게 현재 방식.
     // 자동화하려면 완전 무료 대안으로 섹터 ETF(XLB·XLK·XLRE·XLI·XLV·XLY·XLU·XLF·XLP·XLC·XLE) 일별 종가를
@@ -718,9 +792,9 @@
     `).join("");
   }
 
-  function renderIndexRow(elId, indices){
+  function renderIndexRow(elId, indices, panel){
     document.getElementById(elId).innerHTML = indices.map(i => `
-      <div class="index-card">
+      <div class="index-card ${selectedTrend[panel] === i.name ? 'active' : ''}" onclick="selectTrendIndex('${panel}','${i.name}')">
         <div class="name">${i.name}</div>
         <div class="value mono">${i.value}</div>
         <div class="delta mono ${i.cls}">${i.delta}</div>
@@ -776,6 +850,93 @@
     }).join("");
   }
 
+  /* ---------- 추이 차트 (스파크라인) ---------- */
+  const selectedTrend = { kr: "KOSPI", us: "S&P 500" }; // 현재 각 패널에서 클릭으로 선택된 지수
+  const KR_TREND_LABELS = { KOSPI: "코스피", KOSDAQ: "코스닥" };
+
+  function selectTrendIndex(panel, name){
+    selectedTrend[panel] = name;
+    updateTrendChart(panel);
+    renderIndexRow(panel === "kr" ? "kr-index-row" : "us-index-row", DATA[panel].indices, panel);
+  }
+
+  function updateTrendChart(panel){
+    const name = selectedTrend[panel];
+    const history = (DATA[panel].history || {})[name] || [];
+    const label = panel === "kr" ? (KR_TREND_LABELS[name] || name) : name;
+    document.getElementById(`${panel}-trend-label`).textContent = `${label} ${history.length}거래일 추이`;
+    renderTrendChart(`${panel}-trend`, history, "--gold");
+  }
+
+  function renderTrendChart(elId, history, colorVar){
+    const el = document.getElementById(elId);
+    if(!el) return;
+    if(!Array.isArray(history) || history.length < 2){ el.innerHTML = ""; return; }
+
+    const values = history.map(h => h.close);
+    const dates = history.map(h => h.date);
+    const W = 600, H = 88, padTop = 14, padBottom = 20, padX = 4;
+    const plotH = H - padTop - padBottom;
+    const n = values.length;
+    const min = Math.min(...values), max = Math.max(...values);
+    const range = (max - min) || 1;
+    const x = i => padX + (i/(n-1)) * (W - padX*2);
+    const y = v => padTop + (1 - (v-min)/range) * plotH;
+
+    const points = values.map((v,i) => [x(i), y(v)]);
+    const linePath = "M" + points.map(p => p.join(",")).join(" L");
+    const areaPath = `${linePath} L${x(n-1)},${H-padBottom} L${x(0)},${H-padBottom} Z`;
+    const gradId = elId + "-grad";
+    const lastX = x(n-1), lastY = y(values[n-1]);
+
+    el.innerHTML = `
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="var(${colorVar})" stop-opacity="0.22"/>
+            <stop offset="100%" stop-color="var(${colorVar})" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <path d="${areaPath}" fill="url(#${gradId})" stroke="none"></path>
+        <path d="${linePath}" fill="none" stroke="var(${colorVar})" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"></path>
+        <line class="trend-crosshair" x1="0" y1="${padTop}" x2="0" y2="${H-padBottom}"></line>
+        <circle class="trend-dot" r="4" fill="var(${colorVar})" stroke="var(--panel)" stroke-width="2"></circle>
+        <circle cx="${lastX}" cy="${lastY}" r="4" fill="var(${colorVar})" stroke="var(--panel)" stroke-width="1.5"></circle>
+        <text class="trend-axislabel" x="${x(0)}" y="${H-4}" text-anchor="start">${dates[0]}</text>
+        <text class="trend-axislabel" x="${x(n-1)}" y="${H-4}" text-anchor="end">${dates[n-1]}</text>
+      </svg>
+      <div class="trend-tooltip" id="${elId}-tip"></div>
+    `;
+
+    const svg = el.querySelector("svg");
+    const crosshair = el.querySelector(".trend-crosshair");
+    const dot = el.querySelector(".trend-dot");
+    const tip = el.querySelector(`#${elId}-tip`);
+
+    function showAt(i){
+      const px = x(i), py = y(values[i]);
+      crosshair.setAttribute("x1", px); crosshair.setAttribute("x2", px);
+      crosshair.style.opacity = 1;
+      dot.setAttribute("cx", px); dot.setAttribute("cy", py);
+      dot.style.opacity = 1;
+      const rect = svg.getBoundingClientRect();
+      tip.style.left = `${(px / W) * rect.width}px`;
+      tip.style.top = `${(py / H) * rect.height - 10}px`;
+      tip.innerHTML = `<div class="d">${dates[i]}</div><div class="mono">${fmtNum(values[i])}</div>`;
+      tip.style.opacity = 1;
+    }
+    function hide(){ crosshair.style.opacity = 0; dot.style.opacity = 0; tip.style.opacity = 0; }
+
+    svg.addEventListener("mousemove", (e) => {
+      const rect = svg.getBoundingClientRect();
+      const relX = (e.clientX - rect.left) / rect.width * W;
+      let idx = Math.round(((relX - padX) / (W - padX*2)) * (n-1));
+      idx = Math.max(0, Math.min(n-1, idx));
+      showAt(idx);
+    });
+    svg.addEventListener("mouseleave", hide);
+  }
+
   function render(){
     renderDateStatus();
     document.getElementById("updatedAt").textContent = DATA.updatedAt;
@@ -785,13 +946,15 @@
 
     renderTicker();
 
-    renderIndexRow("kr-index-row", DATA.kr.indices);
+    renderIndexRow("kr-index-row", DATA.kr.indices, "kr");
+    updateTrendChart("kr");
     document.getElementById("kr-breadth").innerHTML = DATA.kr.breadth;
     document.getElementById("kr-briefing-source").textContent = DATA.kr.briefingSource;
     document.getElementById("kr-briefing").innerHTML = DATA.kr.briefing;
     renderSectorSection("kr-sector-bars", "kr-sector-reasons", DATA.kr.sectorsTop, DATA.kr.sectorsBottom);
 
-    renderIndexRow("us-index-row", DATA.us.indices);
+    renderIndexRow("us-index-row", DATA.us.indices, "us");
+    updateTrendChart("us");
     document.getElementById("us-breadth").innerHTML = DATA.us.breadth;
     document.getElementById("us-briefing-source").textContent = DATA.us.briefingSource;
     document.getElementById("us-briefing").innerHTML = DATA.us.briefing;
