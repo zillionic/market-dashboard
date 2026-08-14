@@ -267,10 +267,6 @@
     display:flex; align-items:center; gap:6px;
   }
   .briefing h3::before{ content:"◆"; color: var(--gold); font-size: 11px; }
-  .briefing .source-tag{
-    font-size: 10.5px; color: var(--ink-faint); margin-bottom: 10px;
-    font-family:'JetBrains Mono', monospace;
-  }
   .briefing p{ font-size: 13.5px; line-height: 1.95; color: var(--ink-dim); }
   .briefing p strong{ color: var(--ink); font-weight:600; }
   .briefing ul{ list-style:none; margin:0; padding:0; }
@@ -353,7 +349,6 @@
 
       <div class="briefing briefing-top">
         <h3>시황</h3>
-        <div class="source-tag" id="kr-briefing-source"></div>
         <div id="kr-briefing"></div>
       </div>
 
@@ -384,7 +379,6 @@
 
       <div class="briefing briefing-top">
         <h3>시황</h3>
-        <div class="source-tag" id="us-briefing-source"></div>
         <div id="us-briefing"></div>
       </div>
 
@@ -502,7 +496,6 @@
         { name:"통신",    pct:-1.72, reason:"방어주 성격에도 순환매 자금이 성장주로 이동" },
         { name:"IT 서비스", pct:-1.61, reason:"CLARITY Act 표결 9월 연기 소식에 가상자산 연계 종목 약세" },
       ],
-      briefingSource: "출처: 신한투자증권 강진혁(국내 시황, t.me/shStrategy) · 업종 등락률은 KRX Open API 실시간 연동",
       briefing: "코스피 6,258.77(-0.60%)·코스닥 798.81(-0.36%), 7주 연속 하락 마감<br>연준 매파 발언·Alphabet 회사채 발행에 금리 부담 재부각, 美 고용보고서 관망세<br>반도체 숨고르기(삼성전자 +0.2%, SK하이닉스 -4.9%) 속 비반도체 장세, 상승 554개<br>배터리 강세 두드러짐(<strong>SK이노베이션 +10.8%</strong>, 삼성SDI +7.5%, 엘앤에프 +13.0%)<br>장마감 후 SK하이닉스 중간배당 공시에 반도체 시간외 반등"
     },
     us: {
@@ -528,7 +521,6 @@
         { name:"금융(Financial)",                    pct:0.14,  reason:"국채금리 변동성 확대 속 대형 은행주 약보합" },
         { name:"유틸리티(Utilities)",                pct:0.29,  reason:"장중 한때 강세였으나 위험선호 심리 회복에 방어주 매력 약화, 마감 직전 상승분 반납" },
       ],
-      briefingSource: "출처: 사제콩이_서상영(미래에셋증권), t.me/ehdwl 08/07",
       briefing: "7월 비농업고용 -2.3만 건, 예상(+8만 건) 큰 폭 하회…5·6월도 10만 건+ 하향 수정<br>노동시장 냉각에도 침체보다 완만한 둔화로 해석, 9월 금리인상 기대 후퇴(CME 58%→42%)<br>국채금리·달러 하락 속 호르무즈 해협 협상 진전 소식까지 겹치며 상승폭 확대<br>S&amp;P500·나스닥 <strong>사상 최고치</strong>(다우 +0.28%, S&amp;P500 +0.62%, 나스닥 +1.30%, 필라델피아반도체 +2.56%)<br>메모리 스토리지주 약세 vs <strong>엔비디아·스페이스X·팔란티어</strong> 강세"
     },
     sources: "출처: 국내 — 신한투자증권(t.me/shStrategy) / 해외 시황 — 미래에셋증권(t.me/ehdwl) · 해외 업종 등락률 — Finviz.com Group Screener"
@@ -607,8 +599,6 @@
       });
       if (Array.isArray(kospiJson.top5) && kospiJson.top5.length) DATA.kr.sectorsTop = kospiJson.top5.map(mapRow);
       if (Array.isArray(kospiJson.bottom5) && kospiJson.bottom5.length) DATA.kr.sectorsBottom = kospiJson.bottom5.map(mapRow);
-
-      DATA.kr.briefingSource = `출처: 신한투자증권 강진혁(국내 시황, t.me/shStrategy) · 지수·업종 등락률은 KRX Open API 실시간 연동 (${kospiJson.basDd})`;
     } catch (err) {
       console.warn("국내 지수/업종 실시간 연동 실패, 스냅샷 값을 유지합니다:", err);
     }
@@ -732,8 +722,8 @@
       const res = await fetch(BRIEFING_API, { cache: "no-store" });
       if (res.ok) {
         const j = await res.json();
-        if (j.kr?.briefing) { DATA.kr.briefing = j.kr.briefing; DATA.kr.briefingSource = j.kr.briefingSource; }
-        if (j.us?.briefing) { DATA.us.briefing = j.us.briefing; DATA.us.briefingSource = j.us.briefingSource; }
+        if (j.kr?.briefing) DATA.kr.briefing = j.kr.briefing;
+        if (j.us?.briefing) DATA.us.briefing = j.us.briefing;
         if (j.generatedAt) DATA.lastCronRun = j.generatedAt;
         if (Array.isArray(j.us?.sectorsTop) && j.us.sectorsTop.length) {
           DATA.us.sectorsTop = j.us.sectorsTop;
@@ -1046,14 +1036,12 @@
     renderIndexRow("kr-index-row", DATA.kr.indices, "kr");
     updateTrendChart("kr");
     document.getElementById("kr-breadth").innerHTML = DATA.kr.breadth;
-    document.getElementById("kr-briefing-source").textContent = DATA.kr.briefingSource;
     renderBriefing("kr-briefing", DATA.kr.briefing);
     renderSectorSection("kr-sector-bars", "kr-sector-reasons", DATA.kr.sectorsTop, DATA.kr.sectorsBottom);
 
     renderIndexRow("us-index-row", DATA.us.indices, "us");
     updateTrendChart("us");
     document.getElementById("us-breadth").innerHTML = DATA.us.breadth;
-    document.getElementById("us-briefing-source").textContent = DATA.us.briefingSource;
     renderBriefing("us-briefing", DATA.us.briefing);
     renderSectorSection("us-sector-bars", "us-sector-reasons", DATA.us.sectorsTop, DATA.us.sectorsBottom);
 
