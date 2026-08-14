@@ -1067,8 +1067,10 @@
   /* ============================================================
      4-1. 다크/라이트 테마 전환
      -----------------------------------------------------------
-     세션(현재 탭) 동안만 유지되며, 새로고침하면 기본값(다크)으로 돌아갑니다.
+     localStorage에 저장해서 다음 방문 때도 마지막으로 고른 테마가 유지됩니다.
      ============================================================ */
+  const THEME_STORAGE_KEY = "market-dashboard-theme";
+
   function applyTheme(theme){
     document.documentElement.setAttribute("data-theme", theme);
     const icon = document.getElementById("themeToggleIcon");
@@ -1083,14 +1085,18 @@
   }
   function toggleTheme(){
     const current = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
-    applyTheme(current === "light" ? "dark" : "light");
+    const next = current === "light" ? "dark" : "light";
+    applyTheme(next);
+    try { localStorage.setItem(THEME_STORAGE_KEY, next); } catch(err) { /* 프라이빗 브라우징 등으로 저장 실패해도 무시 */ }
   }
 
   /* ============================================================
      5. 초기 실행
      ============================================================ */
   (async function init(){
-    applyTheme("dark");
+    let savedTheme = "dark";
+    try { savedTheme = localStorage.getItem(THEME_STORAGE_KEY) || "dark"; } catch(err) { /* 프라이빗 브라우징 등으로 접근 실패해도 기본값(다크)으로 진행 */ }
+    applyTheme(savedTheme);
     if(!REQUIRE_PASSWORD){
       document.body.classList.remove("locked");
       document.body.classList.add("unlocked");
