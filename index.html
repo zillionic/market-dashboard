@@ -420,7 +420,9 @@
     }
   }
 
-  // 목업 추이 데이터에 날짜를 붙이는 유틸 (실제 히스토리 API 응답과 같은 {date, close} 형태로 맞춤)
+  // 목업 추이 데이터에 날짜를 붙이는 유틸. 실제 히스토리(/api/history, cron-briefing.js가 쌓는 값)는
+  // "YYYY-MM-DD"(ISO) 형식이라서, 목업도 같은 형식으로 맞춰야 실제 데이터와 섞여도 라벨이 일관됩니다.
+  // 화면 표시용 "MM.DD" 변환은 renderTrendChart에서 렌더링 시점에 합니다.
   function genBusinessDates(endDateStr, count){
     const dates = [];
     let d = new Date(endDateStr + "T00:00:00");
@@ -429,7 +431,7 @@
       if(day !== 0 && day !== 6) dates.unshift(new Date(d));
       d.setDate(d.getDate() - 1);
     }
-    return dates.map(dt => `${String(dt.getMonth()+1).padStart(2,'0')}.${String(dt.getDate()).padStart(2,'0')}`);
+    return dates.map(dt => `${dt.getFullYear()}-${String(dt.getMonth()+1).padStart(2,'0')}-${String(dt.getDate()).padStart(2,'0')}`);
   }
   function mockHistory(values, endDateStr){
     const dates = genBusinessDates(endDateStr, values.length);
@@ -874,7 +876,7 @@
     if(!Array.isArray(history) || history.length < 2){ el.innerHTML = ""; return; }
 
     const values = history.map(h => h.close);
-    const dates = history.map(h => h.date);
+    const dates = history.map(h => h.date.length === 10 ? h.date.slice(5).replace('-', '.') : h.date); // "YYYY-MM-DD" -> "MM.DD"
     const W = 600, H = 88, padTop = 14, padBottom = 20, padX = 4;
     const plotH = H - padTop - padBottom;
     const n = values.length;
