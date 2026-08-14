@@ -85,6 +85,7 @@ async function fetchOne(symbol) {
     close: Number(close.toFixed(2)),
     change: Number(change.toFixed(2)),
     pct: Number(pct.toFixed(2)),
+    regularMarketTime: meta.regularMarketTime || null, // unix seconds, 마감 날짜 계산용
   };
 }
 
@@ -99,12 +100,18 @@ module.exports = async function handler(req, res) {
     const marketState = getMarketState(); // 뉴욕 시간 기준 직접 계산 (Yahoo 필드 사용 안 함)
     const isOpen = marketState === "REGULAR";
 
+    // 마감 상태일 때 "며칠자 마감인지" 보여주기 위한 날짜 (뉴욕 달력 기준).
+    const asOfDate = sp500.regularMarketTime
+      ? new Date(sp500.regularMarketTime * 1000).toLocaleDateString("en-CA", { timeZone: "America/New_York" })
+      : null;
+
     // 캐시 없이 매번 새로 가져옵니다.
     res.setHeader("Cache-Control", "no-store");
 
     res.status(200).json({
       marketState,
       isOpen,
+      asOfDate, // "YYYY-MM-DD"
       sp500,
       nasdaq,
       dow,
