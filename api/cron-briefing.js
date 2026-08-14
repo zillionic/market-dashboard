@@ -322,7 +322,7 @@ ${usRaw}
     },
     body: JSON.stringify({
       model: "claude-sonnet-5",
-      max_tokens: 3000,
+      max_tokens: 4096,
       messages: [{ role: "user", content: prompt }],
     }),
   });
@@ -334,7 +334,7 @@ ${usRaw}
   try {
     return JSON.parse(cleaned); // { kr: [...], us: [...] }
   } catch (err) {
-    throw new Error(`시장 섹션 JSON 파싱 실패: ${err.message} | 응답 길이: ${cleaned.length} | 끝부분: ${cleaned.slice(-200)}`);
+    throw new Error(`시장 섹션 JSON 파싱 실패: ${err.message} | stop_reason: ${json.stop_reason} | 응답 길이: ${cleaned.length} | 끝부분: ${cleaned.slice(-200)}`);
   }
 }
 
