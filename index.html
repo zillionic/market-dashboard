@@ -335,7 +335,7 @@
       <div class="panel-head" style="display:flex; justify-content:space-between; align-items:flex-end;">
         <div>
           <span class="eyebrow">Korea</span>
-          <h2>코스피 · 코스닥</h2>
+          <h2>코스피 · 코스닥 · 원/달러</h2>
         </div>
         <span class="badge snapshot" id="krMarketBadge" style="margin-bottom:2px;"></span>
       </div>
@@ -476,12 +476,13 @@
       indices: [
         { name:"KOSPI",  value:"6,258.77", delta:"▼0.60%", cls:"down-kr" },
         { name:"KOSDAQ", value:"798.81",   delta:"▼0.36%", cls:"down-kr" },
+        { name:"USD/KRW", value:"1,416.10", delta:"▼7.70원", cls:"down-kr" },
       ],
       fx: "원/달러 환율 <span class=\"mono\">1,416.10원</span> (전일比 <span class=\"mono down-kr\">▼7.70원</span>)",
       breadth: "등락 종목 비율 코스피 <span class=\"mono up-kr\">상승 554</span> : <span class=\"mono down-kr\">하락 322</span> · 코스닥 <span class=\"mono up-kr\">상승 808</span> : <span class=\"mono down-kr\">하락 829</span>",
       // cron-briefing.js가 매일 Upstash에 쌓는 실제 종가로 fetchLiveData()가 채웁니다.
       // 20거래일이 다 쌓이기 전까지는 그만큼만 짧게 표시됩니다.
-      history: { KOSPI: [], KOSDAQ: [] },
+      history: { KOSPI: [], KOSDAQ: [], "USD/KRW": [] },
       sectorsTop: [
         { name:"화학",       pct:4.37, reason:"S-Oil·한화솔루션·OCI홀딩스 등 정유·태양광 소재주 강세가 업종 전체를 견인" },
         { name:"음식료·담배", pct:3.34, reason:"반도체 조정 국면 속 대형지수 부진을 피한 방어주 순환매 유입" },
@@ -685,6 +686,17 @@
           const t = DATA.ticker.find(t => t.name === name);
           if (t) { t.value = fmtNum(r.close); t.delta = d.long; t.cls = d.cls; }
         });
+
+        // 원/달러는 등락률(%)보다 원 단위 변동을 보는 게 관행이라 별도로 처리합니다.
+        const fx = json.usdkrw;
+        if (fx && Number.isFinite(fx.close) && Number.isFinite(fx.change)) {
+          const isPos = fx.change >= 0;
+          const cls = isPos ? "up-kr" : "down-kr";
+          const delta = `${isPos ? "▲" : "▼"}${fmtNum(Math.abs(fx.change))}원`;
+          DATA.kr.indices[2] = { name: "USD/KRW", value: fmtNum(fx.close), delta, cls };
+          const t = DATA.ticker.find(t => t.name === "USD/KRW");
+          if (t) { t.value = fmtNum(fx.close); t.delta = delta; t.cls = cls; }
+        }
       } else {
         console.warn("kr-indices API 응답 실패:", res.status);
       }
@@ -922,7 +934,7 @@
 
   /* ---------- 추이 차트 (스파크라인) ---------- */
   const selectedTrend = { kr: "KOSPI", us: "S&P 500" }; // 현재 각 패널에서 클릭으로 선택된 지수
-  const KR_TREND_LABELS = { KOSPI: "코스피", KOSDAQ: "코스닥" };
+  const KR_TREND_LABELS = { KOSPI: "코스피", KOSDAQ: "코스닥", "USD/KRW": "원/달러" };
 
   function selectTrendIndex(panel, name){
     selectedTrend[panel] = name;

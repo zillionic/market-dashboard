@@ -22,6 +22,7 @@ const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 const KEYS = {
   KOSPI: "KOSPI",
   KOSDAQ: "KOSDAQ",
+  USDKRW: "USD/KRW",
   SP500: "S&P 500",
   NASDAQ: "NASDAQ",
   DOW: "DOW",

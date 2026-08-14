@@ -657,7 +657,7 @@ module.exports = async function handler(req, res) {
     try {
       const { kr, us } = await fetchIndexCloses();
       res.status(200).json({
-        kr: { asOfDate: kr.asOfDate, kospi: kr.kospi, kosdaq: kr.kosdaq },
+        kr: { asOfDate: kr.asOfDate, kospi: kr.kospi, kosdaq: kr.kosdaq, usdkrw: kr.usdkrw },
         us: { asOfDate: us.asOfDate, sp500: us.sp500, nasdaq: us.nasdaq, dow: us.dow },
       });
     } catch (err) {
@@ -736,6 +736,7 @@ module.exports = async function handler(req, res) {
       await Promise.all([
         appendIndexHistory("KOSPI", kr.asOfDate, kr.kospi?.close),
         appendIndexHistory("KOSDAQ", kr.asOfDate, kr.kosdaq?.close),
+        appendIndexHistory("USDKRW", kr.asOfDate, kr.usdkrw?.close),
         appendIndexHistory("SP500", us.asOfDate, us.sp500?.close),
         appendIndexHistory("NASDAQ", us.asOfDate, us.nasdaq?.close),
         appendIndexHistory("DOW", us.asOfDate, us.dow?.close),
