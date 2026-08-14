@@ -940,11 +940,26 @@
 
   /* ---------- 추이 차트 (스파크라인) ---------- */
   const selectedTrend = { kr: "KOSPI", us: "S&P 500" }; // 현재 각 패널에서 클릭으로 선택된 지수
+  const TREND_STORAGE_KEY = "market-dashboard-trend";
 
   function selectTrendIndex(panel, name){
     selectedTrend[panel] = name;
     updateTrendChart(panel);
     renderIndexRow(panel === "kr" ? "kr-index-row" : "us-index-row", DATA[panel].indices, panel);
+    try { localStorage.setItem(TREND_STORAGE_KEY, JSON.stringify(selectedTrend)); } catch(err) { /* 프라이빗 브라우징 등으로 저장 실패해도 무시 */ }
+  }
+
+  // 재방문 시 마지막으로 보던 지수를 복원합니다. 저장된 이름이 지금 존재하는 지수와
+  // 하나라도 다르면(데이터 구조가 바뀐 경우 등) 그 패널은 기본값을 그대로 씁니다.
+  function restoreSelectedTrend(){
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(TREND_STORAGE_KEY) || "{}"); } catch(err) { return; }
+    ["kr", "us"].forEach((panel) => {
+      const name = saved[panel];
+      if (name && Object.prototype.hasOwnProperty.call(DATA[panel].history, name)) {
+        selectedTrend[panel] = name;
+      }
+    });
   }
 
   function updateTrendChart(panel){
@@ -1112,6 +1127,7 @@
       document.body.classList.add("unlocked");
     }
     if(USE_LIVE_API){ await fetchLiveData(); }
+    restoreSelectedTrend();
     render();
   })();
 </script>
