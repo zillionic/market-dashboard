@@ -273,6 +273,14 @@
   }
   .briefing p{ font-size: 13.5px; line-height: 1.95; color: var(--ink-dim); }
   .briefing p strong{ color: var(--ink); font-weight:600; }
+  .briefing ul{ list-style:none; margin:0; padding:0; }
+  .briefing li{
+    position:relative; padding-left:14px; margin-bottom:6px;
+    font-size: 13.5px; line-height: 1.7; color: var(--ink-dim);
+  }
+  .briefing li:last-child{ margin-bottom:0; }
+  .briefing li::before{ content:"•"; position:absolute; left:0; color: var(--gold); }
+  .briefing li strong{ color: var(--ink); font-weight:600; }
 
   footer{
     margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--line);
@@ -346,7 +354,7 @@
       <div class="briefing briefing-top">
         <h3>시황</h3>
         <div class="source-tag" id="kr-briefing-source"></div>
-        <p id="kr-briefing"></p>
+        <div id="kr-briefing"></div>
       </div>
 
       <div class="divider"></div>
@@ -377,7 +385,7 @@
       <div class="briefing briefing-top">
         <h3>시황</h3>
         <div class="source-tag" id="us-briefing-source"></div>
-        <p id="us-briefing"></p>
+        <div id="us-briefing"></div>
       </div>
 
       <div class="divider"></div>
@@ -819,6 +827,17 @@
     `).join("");
   }
 
+  // 시황 코멘트는 "줄1<br>줄2<br>..." 형태 문자열로 옵니다 (cron-briefing.js의 summarize() 참고).
+  // <br>로 나눠서 노션처럼 불릿 목록으로 보여줍니다 — 한 줄만 오면 굳이 불릿 없이 그대로 표시.
+  function renderBriefing(elId, text){
+    const el = document.getElementById(elId);
+    if(!el) return;
+    const lines = (text || "").split(/<br\s*\/?>/i).map(s => s.trim()).filter(Boolean);
+    el.innerHTML = lines.length > 1
+      ? `<ul>${lines.map(l => `<li>${l}</li>`).join("")}</ul>`
+      : (text || "");
+  }
+
   function formatShortKoreanDate(iso){
     const dow = ['일','월','화','수','목','금','토'];
     const d = new Date(iso + "T00:00:00");
@@ -1028,14 +1047,14 @@
     updateTrendChart("kr");
     document.getElementById("kr-breadth").innerHTML = DATA.kr.breadth;
     document.getElementById("kr-briefing-source").textContent = DATA.kr.briefingSource;
-    document.getElementById("kr-briefing").innerHTML = DATA.kr.briefing;
+    renderBriefing("kr-briefing", DATA.kr.briefing);
     renderSectorSection("kr-sector-bars", "kr-sector-reasons", DATA.kr.sectorsTop, DATA.kr.sectorsBottom);
 
     renderIndexRow("us-index-row", DATA.us.indices, "us");
     updateTrendChart("us");
     document.getElementById("us-breadth").innerHTML = DATA.us.breadth;
     document.getElementById("us-briefing-source").textContent = DATA.us.briefingSource;
-    document.getElementById("us-briefing").innerHTML = DATA.us.briefing;
+    renderBriefing("us-briefing", DATA.us.briefing);
     renderSectorSection("us-sector-bars", "us-sector-reasons", DATA.us.sectorsTop, DATA.us.sectorsBottom);
 
     document.getElementById("footerNote").textContent = "데이터 기준: " + DATA.updatedAt;
