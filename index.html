@@ -817,7 +817,7 @@
   function formatShortKoreanDate(iso){
     const dow = ['일','월','화','수','목','금','토'];
     const d = new Date(iso + "T00:00:00");
-    return `${String(d.getMonth()+1).padStart(2,'0')}.${String(d.getDate()).padStart(2,'0')}(${dow[d.getDay()]})`;
+    return `${d.getMonth()+1}월 ${d.getDate()}일(${dow[d.getDay()]})`;
   }
 
   function renderMacroCalendar(events){

@@ -94,20 +94,26 @@ const FRED_API_KEY = process.env.FRED_API_KEY;
 
 // release_name에 keyword가 포함되면(대소문자 무관) 통과시키고, 대시보드에는 원문 대신
 // 한국에서 통용되는 이름(ko)으로 표시합니다. 새 지표를 더 보고 싶으면 이 목록에
-// { keyword, ko } 한 줄만 추가하면 필터링과 한글 표시명이 동시에 적용됩니다.
+// { keyword, ko, periodOffset } 한 줄만 추가하면 필터링·한글 표시명·데이터 기준월이
+// 동시에 적용됩니다.
+//
+// periodOffset: 발표월 대비 실제 데이터가 몇 달 전 것인지 (예: 8월에 발표하는 7월 소매판매는 -1).
+// 미국 월간 지표는 거의 다 "발표 전월" 데이터를 다루는 관행이라 -1이 기본값입니다.
+//   - 예외 1) 소비자신뢰지수는 그 달 설문을 그 달에 바로 발표하는 실시간 서베이라 0.
+//   - 예외 2) GDP는 분기 데이터라 "몇 월"로 표기하는 게 오히려 헷갈려서 null(표기 생략).
 const MACRO_RELEASES = [
-  { keyword: "Employment Situation", ko: "미국 고용보고서" },
-  { keyword: "Consumer Price Index", ko: "미국 소비자물가지수(CPI)" },
-  { keyword: "Producer Price Index", ko: "미국 생산자물가지수(PPI)" },
-  { keyword: "Personal Income and Outlays", ko: "미국 개인소득·지출(PCE 물가)" },
-  { keyword: "Advance Monthly Sales for Retail", ko: "미국 소매판매" },
-  { keyword: "Gross Domestic Product", ko: "미국 GDP(국내총생산)" },
-  { keyword: "Industrial Production", ko: "미국 산업생산·설비가동률" },
-  { keyword: "Housing Starts", ko: "미국 주택착공건수" },
-  { keyword: "Existing Home Sales", ko: "미국 기존주택판매" },
-  { keyword: "New Residential Sales", ko: "미국 신규주택판매" },
-  { keyword: "Consumer Confidence", ko: "미국 소비자신뢰지수" },
-  { keyword: "ISM", ko: "미국 ISM 제조업·서비스업 지수" },
+  { keyword: "Employment Situation", ko: "미국 고용보고서", periodOffset: -1 },
+  { keyword: "Consumer Price Index", ko: "미국 소비자물가지수(CPI)", periodOffset: -1 },
+  { keyword: "Producer Price Index", ko: "미국 생산자물가지수(PPI)", periodOffset: -1 },
+  { keyword: "Personal Income and Outlays", ko: "미국 개인소득·지출(PCE 물가)", periodOffset: -1 },
+  { keyword: "Advance Monthly Sales for Retail", ko: "미국 소매판매", periodOffset: -1 },
+  { keyword: "Gross Domestic Product", ko: "미국 GDP(국내총생산)", periodOffset: null },
+  { keyword: "Industrial Production", ko: "미국 산업생산·설비가동률", periodOffset: -1 },
+  { keyword: "Housing Starts", ko: "미국 주택착공건수", periodOffset: -1 },
+  { keyword: "Existing Home Sales", ko: "미국 기존주택판매", periodOffset: -1 },
+  { keyword: "New Residential Sales", ko: "미국 신규주택판매", periodOffset: -1 },
+  { keyword: "Consumer Confidence", ko: "미국 소비자신뢰지수", periodOffset: 0 },
+  { keyword: "ISM", ko: "미국 ISM 제조업·서비스업 지수", periodOffset: -1 },
 ];
 // FRED의 "FOMC Press Release"·"H.15 Selected Interest Rates"는 실제 회의 일정이 아니라
 // 영업일마다(주말 포함으로 뜨는 경우도 있음) 갱신되는 시리즈라서 일부러 제외했습니다.
@@ -117,6 +123,14 @@ function nyDateStr(offsetDays = 0) {
   const d = new Date();
   d.setDate(d.getDate() + offsetDays);
   return d.toLocaleDateString("en-CA", { timeZone: "America/New_York" }); // "YYYY-MM-DD"
+}
+
+// releaseDate("YYYY-MM-DD") 기준으로 offsetMonths만큼 이전 달을 "(N월)" 형태로 반환합니다.
+function periodLabel(releaseDate, offsetMonths) {
+  if (offsetMonths === null || offsetMonths === undefined) return "";
+  const d = new Date(releaseDate + "T00:00:00Z");
+  d.setUTCMonth(d.getUTCMonth() + offsetMonths);
+  return `(${d.getUTCMonth() + 1}월)`;
 }
 
 async function fetchMacroCalendar() {
@@ -139,7 +153,7 @@ async function fetchMacroCalendar() {
       const hit = MACRO_RELEASES.find((m) =>
         (r.release_name || "").toLowerCase().includes(m.keyword.toLowerCase())
       );
-      return hit ? { date: r.date, rawName: r.release_name, ko: hit.ko } : null;
+      return hit ? { date: r.date, rawName: r.release_name, ko: hit.ko, periodOffset: hit.periodOffset } : null;
     })
     .filter(Boolean);
 
@@ -161,7 +175,7 @@ async function fetchMacroCalendar() {
   deduped.forEach((e) => { rawCounts[e.rawName] = (rawCounts[e.rawName] || 0) + 1; });
   const events = deduped
     .filter((e) => rawCounts[e.rawName] === 1)
-    .map((e) => ({ date: e.date, name: e.ko }));
+    .map((e) => ({ date: e.date, name: `${e.ko}${periodLabel(e.date, e.periodOffset)}` }));
 
   events.sort((a, b) => a.date.localeCompare(b.date));
   return events;
