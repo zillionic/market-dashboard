@@ -644,11 +644,19 @@ module.exports = async function handler(req, res) {
   }
 
   // 진단용: ?debugMacro=1 로 호출하면 FRED에서 가져온 다음 7일 매크로 일정만 확인합니다
-  // (Upstash에 쓰지 않음, FRED_API_KEY 미설정이면 빈 배열이 정상입니다).
+  // (기본은 Upstash에 쓰지 않음, FRED_API_KEY 미설정이면 빈 배열이 정상입니다).
+  // ?debugMacro=1&save=1 을 붙이면 대시보드가 실제로 읽는 캐시(macro:calendar)에도
+  // 그 자리에서 바로 저장합니다 — 정식 크론(밤 22:30 KST)을 안 기다리고 지금 바로
+  // 반영하고 싶을 때 씁니다. Claude 호출이 없어 비용은 들지 않습니다.
   if (req.query.debugMacro) {
     try {
       const events = await fetchMacroCalendar();
-      res.status(200).json({ hasApiKey: !!FRED_API_KEY, events });
+      let saved = false;
+      if (req.query.save) {
+        await redisSet("macro:calendar", events);
+        saved = true;
+      }
+      res.status(200).json({ hasApiKey: !!FRED_API_KEY, saved, events });
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }
