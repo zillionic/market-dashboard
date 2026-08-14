@@ -41,9 +41,26 @@ async function redisSet(key, valueObj) {
   }
 }
 
-// t.me/s/{channel} 미리보기 페이지에서 가장 최근 메시지의 텍스트만 대략 추출합니다.
+// t.me/s/{channel} 미리보기 페이지에서 메시지 텍스트를 대략 추출합니다.
 // ⚠️ 텔레그램이 페이지 구조를 바꾸면 이 정규식도 손봐야 할 수 있습니다.
-async function fetchLatestPost(channel) {
+//
+// mustContainAll이 주어지면, 채널이 하루에 여러 번 다른 주제로 글을 올리는 경우
+// (예: 아침엔 "간밤 미국 시장 요약", 오후엔 "국내 마감 시황")를 대비해
+// 최신 글부터 거슬러 올라가며 해당 키워드를 모두 포함하는 첫 글을 찾습니다.
+// 못 찾으면 그냥 가장 최근 글을 반환합니다(안전장치).
+function stripHtml(rawHtml) {
+  return rawHtml
+    .replace(/<br\s*\/?>/g, "\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&#39;/g, "'")
+    .replace(/&quot;/g, '"')
+    .trim();
+}
+
+async function fetchLatestPost(channel, mustContainAll = []) {
   const res = await fetch(`https://t.me/s/${channel}`, {
     headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
   });
@@ -53,16 +70,15 @@ async function fetchLatestPost(channel) {
   const blocks = [...html.matchAll(/<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/g)];
   if (blocks.length === 0) throw new Error(`텔레그램(${channel})에서 메시지를 찾지 못했습니다.`);
 
-  const lastHtml = blocks[blocks.length - 1][1];
-  return lastHtml
-    .replace(/<br\s*\/?>/g, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&#39;/g, "'")
-    .replace(/&quot;/g, '"')
-    .trim();
+  if (mustContainAll.length > 0) {
+    for (let i = blocks.length - 1; i >= 0; i--) {
+      const text = stripHtml(blocks[i][1]);
+      if (mustContainAll.every((kw) => text.includes(kw))) return text;
+    }
+    // 조건에 맞는 글을 못 찾으면 최신 글로 폴백 (완전히 빈 결과보다 낫습니다)
+  }
+
+  return stripHtml(blocks[blocks.length - 1][1]);
 }
 
 async function summarize(rawText, marketLabel) {
@@ -434,8 +450,8 @@ module.exports = async function handler(req, res) {
   if (req.query.debugRaw) {
     try {
       const [krRaw, usRaw] = await Promise.all([
-        fetchLatestPost("shStrategy"),
-        fetchLatestPost("ehdwl"),
+        fetchLatestPost("shStrategy", ["코스피", "코스닥"]),
+        fetchLatestPost("ehdwl", ["S&P", "나스닥"]),
       ]);
       res.status(200).json({ krRaw, usRaw });
     } catch (err) {
@@ -449,8 +465,8 @@ module.exports = async function handler(req, res) {
   if (req.query.debugMarket) {
     try {
       const [krRaw, usRaw] = await Promise.all([
-        fetchLatestPost("shStrategy"),
-        fetchLatestPost("ehdwl"),
+        fetchLatestPost("shStrategy", ["코스피", "코스닥"]),
+        fetchLatestPost("ehdwl", ["S&P", "나스닥"]),
       ]);
       const marketSection = await generateMarketSection(krRaw, usRaw);
       res.status(200).json(marketSection);
@@ -507,8 +523,8 @@ module.exports = async function handler(req, res) {
 
   try {
     const [krRaw, usRaw] = await Promise.all([
-      fetchLatestPost("shStrategy"),
-      fetchLatestPost("ehdwl"),
+      fetchLatestPost("shStrategy", ["코스피", "코스닥"]),
+      fetchLatestPost("ehdwl", ["S&P", "나스닥"]),
     ]);
 
     const [krBriefing, usBriefing] = await Promise.all([
