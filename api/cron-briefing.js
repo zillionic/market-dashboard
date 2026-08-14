@@ -322,7 +322,7 @@ ${usRaw}
     },
     body: JSON.stringify({
       model: "claude-sonnet-5",
-      max_tokens: 1500,
+      max_tokens: 3000,
       messages: [{ role: "user", content: prompt }],
     }),
   });
@@ -331,7 +331,11 @@ ${usRaw}
   const textBlock = (json.content || []).find((c) => c.type === "text");
   if (!textBlock) throw new Error("Claude 응답(시장 섹션)에서 텍스트를 찾지 못했습니다.");
   const cleaned = textBlock.text.trim().replace(/^```json\s*|^```\s*|```$/g, "");
-  return JSON.parse(cleaned); // { kr: [...], us: [...] }
+  try {
+    return JSON.parse(cleaned); // { kr: [...], us: [...] }
+  } catch (err) {
+    throw new Error(`시장 섹션 JSON 파싱 실패: ${err.message} | 응답 길이: ${cleaned.length} | 끝부분: ${cleaned.slice(-200)}`);
+  }
 }
 
 // "개별 종목 및 이슈" 불릿 리스트 — 원문에 언급된 종목별 실적·공시·뉴스만 추립니다.
