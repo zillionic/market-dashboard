@@ -180,6 +180,21 @@
   .fx-line{ font-size: 13px; color: var(--ink-dim); margin-bottom: 16px; }
   .fx-line .mono{ color: var(--ink); }
 
+  /* ---------- trend chart (sparkline) ---------- */
+  .trend-chart{ position:relative; margin-bottom: 16px; }
+  .trend-chart svg{ display:block; width:100%; height:88px; overflow:visible; }
+  .trend-chart .trend-crosshair{ stroke: var(--ink-faint); stroke-width:1; opacity:0; pointer-events:none; }
+  .trend-chart .trend-dot{ opacity:0; pointer-events:none; }
+  .trend-chart .trend-axislabel{ font-family:'JetBrains Mono', monospace; font-size:10px; fill: var(--ink-faint); }
+  .trend-tooltip{
+    position:absolute; pointer-events:none; opacity:0; transform:translate(-50%,-100%);
+    background: var(--panel-2); border:1px solid var(--line); border-radius:6px;
+    padding:6px 9px; font-family:'JetBrains Mono', monospace; font-size:11.5px;
+    color: var(--ink); white-space:nowrap; z-index:5; transition:opacity 0.1s ease;
+    box-shadow: 0 4px 10px rgba(0,0,0,0.25);
+  }
+  .trend-tooltip .d{ color: var(--ink-faint); font-size:10px; margin-bottom:2px; }
+
   .divider{ height:1px; background: var(--line-soft); margin: 16px 0; }
 
   .sub{ font-size: 12px; letter-spacing: 0.06em; color: var(--ink-faint); text-transform: uppercase; margin-bottom: 10px; }
@@ -289,6 +304,10 @@
       </div>
 
       <div class="index-row" id="kr-index-row"></div>
+
+      <div class="sub">코스피 20거래일 추이</div>
+      <div class="trend-chart" id="kr-trend"></div>
+
       <div class="fx-line" id="kr-breadth"></div>
 
       <div class="briefing briefing-top">
@@ -316,6 +335,10 @@
       </div>
 
       <div class="index-row" id="us-index-row"></div>
+
+      <div class="sub">S&amp;P 500 20거래일 추이</div>
+      <div class="trend-chart" id="us-trend"></div>
+
       <div class="fx-line" id="us-breadth"></div>
 
       <div class="briefing briefing-top">
@@ -416,6 +439,9 @@
       ],
       fx: "원/달러 환율 <span class=\"mono\">1,416.10원</span> (전일比 <span class=\"mono down-kr\">▼7.70원</span>)",
       breadth: "등락 종목 비율 코스피 <span class=\"mono up-kr\">상승 554</span> : <span class=\"mono down-kr\">하락 322</span> · 코스닥 <span class=\"mono up-kr\">상승 808</span> : <span class=\"mono down-kr\">하락 829</span>",
+      // 임시 목업(placeholder) — 실제 20거래일 종가가 아니라 차트 미리보기용 예시 데이터입니다.
+      // 채택되면 cron-briefing.js에서 매일 종가를 Upstash 리스트에 누적하는 방식으로 교체 예정.
+      history: [6082.15,6105.60,6070.30,6118.90,6095.44,6142.10,6160.75,6130.20,6175.88,6205.40,6190.15,6220.60,6245.90,6215.30,6250.70,6270.44,6240.10,6280.95,6296.38,6258.77],
       sectorsTop: [
         { name:"화학",       pct:4.37, reason:"S-Oil·한화솔루션·OCI홀딩스 등 정유·태양광 소재주 강세가 업종 전체를 견인" },
         { name:"음식료·담배", pct:3.34, reason:"반도체 조정 국면 속 대형지수 부진을 피한 방어주 순환매 유입" },
@@ -440,6 +466,8 @@
         { name:"DOW",     value:"54,036.93", delta:"▲0.28%", cls:"up-us" },
       ],
       breadth: "등락 종목 비율 <span class=\"mono up-us\">상승 336</span> : <span class=\"mono down-us\">하락 167</span>",
+      // 임시 목업(placeholder) — S&P 500 20거래일 예시 데이터 (차트 미리보기용).
+      history: [7420.30,7455.10,7398.75,7480.60,7462.20,7510.85,7495.40,7540.15,7520.90,7565.30,7580.75,7555.20,7600.60,7625.44,7590.10,7640.85,7665.30,7690.55,7709.96,7757.64],
       sectorsTop: [
         { name:"소재(Basic Materials)", pct:1.71, reason:"금리 하락 기대에 금·은 등 귀금속 및 광산주 강세, 달러 약세도 우호적" },
         { name:"기술(Technology)",      pct:0.63, reason:"소프트웨어 실적 호조에 반등, 대형 기술주 콜옵션 수급도 우호적" },
@@ -776,6 +804,88 @@
     }).join("");
   }
 
+  /* ---------- 추이 차트 (스파크라인) ---------- */
+  function genBusinessDates(endDateStr, count){
+    const dates = [];
+    let d = new Date(endDateStr + "T00:00:00");
+    while(dates.length < count){
+      const day = d.getDay();
+      if(day !== 0 && day !== 6) dates.unshift(new Date(d));
+      d.setDate(d.getDate() - 1);
+    }
+    return dates.map(dt => `${String(dt.getMonth()+1).padStart(2,'0')}.${String(dt.getDate()).padStart(2,'0')}`);
+  }
+
+  function renderTrendChart(elId, values, dates, upColorVar, downColorVar){
+    const el = document.getElementById(elId);
+    if(!el) return;
+    if(!Array.isArray(values) || values.length < 2){ el.innerHTML = ""; return; }
+
+    const W = 600, H = 88, padTop = 14, padBottom = 20, padX = 4;
+    const plotH = H - padTop - padBottom;
+    const n = values.length;
+    const min = Math.min(...values), max = Math.max(...values);
+    const range = (max - min) || 1;
+    const x = i => padX + (i/(n-1)) * (W - padX*2);
+    const y = v => padTop + (1 - (v-min)/range) * plotH;
+
+    const isUp = values[n-1] >= values[0];
+    const colorVar = isUp ? upColorVar : downColorVar;
+
+    const points = values.map((v,i) => [x(i), y(v)]);
+    const linePath = "M" + points.map(p => p.join(",")).join(" L");
+    const areaPath = `${linePath} L${x(n-1)},${H-padBottom} L${x(0)},${H-padBottom} Z`;
+    const gradId = elId + "-grad";
+    const lastX = x(n-1), lastY = y(values[n-1]);
+
+    el.innerHTML = `
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+        <defs>
+          <linearGradient id="${gradId}" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stop-color="var(${colorVar})" stop-opacity="0.22"/>
+            <stop offset="100%" stop-color="var(${colorVar})" stop-opacity="0"/>
+          </linearGradient>
+        </defs>
+        <path d="${areaPath}" fill="url(#${gradId})" stroke="none"></path>
+        <path d="${linePath}" fill="none" stroke="var(${colorVar})" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" vector-effect="non-scaling-stroke"></path>
+        <line class="trend-crosshair" x1="0" y1="${padTop}" x2="0" y2="${H-padBottom}"></line>
+        <circle class="trend-dot" r="4" fill="var(${colorVar})" stroke="var(--panel)" stroke-width="2"></circle>
+        <circle cx="${lastX}" cy="${lastY}" r="4" fill="var(${colorVar})" stroke="var(--panel)" stroke-width="1.5"></circle>
+        <text class="trend-axislabel" x="${x(0)}" y="${H-4}" text-anchor="start">${dates[0]}</text>
+        <text class="trend-axislabel" x="${x(n-1)}" y="${H-4}" text-anchor="end">${dates[n-1]}</text>
+      </svg>
+      <div class="trend-tooltip" id="${elId}-tip"></div>
+    `;
+
+    const svg = el.querySelector("svg");
+    const crosshair = el.querySelector(".trend-crosshair");
+    const dot = el.querySelector(".trend-dot");
+    const tip = el.querySelector(`#${elId}-tip`);
+
+    function showAt(i){
+      const px = x(i), py = y(values[i]);
+      crosshair.setAttribute("x1", px); crosshair.setAttribute("x2", px);
+      crosshair.style.opacity = 1;
+      dot.setAttribute("cx", px); dot.setAttribute("cy", py);
+      dot.style.opacity = 1;
+      const rect = svg.getBoundingClientRect();
+      tip.style.left = `${(px / W) * rect.width}px`;
+      tip.style.top = `${(py / H) * rect.height - 10}px`;
+      tip.innerHTML = `<div class="d">${dates[i]}</div><div class="mono">${fmtNum(values[i])}</div>`;
+      tip.style.opacity = 1;
+    }
+    function hide(){ crosshair.style.opacity = 0; dot.style.opacity = 0; tip.style.opacity = 0; }
+
+    svg.addEventListener("mousemove", (e) => {
+      const rect = svg.getBoundingClientRect();
+      const relX = (e.clientX - rect.left) / rect.width * W;
+      let idx = Math.round(((relX - padX) / (W - padX*2)) * (n-1));
+      idx = Math.max(0, Math.min(n-1, idx));
+      showAt(idx);
+    });
+    svg.addEventListener("mouseleave", hide);
+  }
+
   function render(){
     renderDateStatus();
     document.getElementById("updatedAt").textContent = DATA.updatedAt;
@@ -786,12 +896,14 @@
     renderTicker();
 
     renderIndexRow("kr-index-row", DATA.kr.indices);
+    renderTrendChart("kr-trend", DATA.kr.history, genBusinessDates("2026-08-07", (DATA.kr.history || []).length), "--kr-up", "--kr-down");
     document.getElementById("kr-breadth").innerHTML = DATA.kr.breadth;
     document.getElementById("kr-briefing-source").textContent = DATA.kr.briefingSource;
     document.getElementById("kr-briefing").innerHTML = DATA.kr.briefing;
     renderSectorSection("kr-sector-bars", "kr-sector-reasons", DATA.kr.sectorsTop, DATA.kr.sectorsBottom);
 
     renderIndexRow("us-index-row", DATA.us.indices);
+    renderTrendChart("us-trend", DATA.us.history, genBusinessDates("2026-08-07", (DATA.us.history || []).length), "--us-up", "--us-down");
     document.getElementById("us-breadth").innerHTML = DATA.us.breadth;
     document.getElementById("us-briefing-source").textContent = DATA.us.briefingSource;
     document.getElementById("us-briefing").innerHTML = DATA.us.briefing;
