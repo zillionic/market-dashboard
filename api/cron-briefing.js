@@ -122,7 +122,10 @@ function isWeekendKST() {
   const kstNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
   const day = kstNow.getDay(); // 0=일 6=토
   const iso = kstNow.toISOString().slice(0, 10);
-  return day === 0 || day === 6 || KR_HOLIDAYS.includes(iso);
+  // 토요일 아침엔 "전일(금요일)"이 실제 거래일이었으므로 실행해서 금요일 마감 시황을 반영합니다.
+  // 일요일 아침엔 "전일(토요일)"도 휴장이라 가져올 새 내용이 없으므로 건너뜁니다
+  // (돌려도 금요일 글을 또 찾아 똑같은 내용을 재생성할 뿐이라 비용만 낭비됩니다).
+  return day === 0 || KR_HOLIDAYS.includes(iso);
 }
 
 // 같은 배포 안의 /api/kr-sectors를 호출해서 오늘 실제 업종 TOP5/BOTTOM5 숫자를 가져옵니다.
