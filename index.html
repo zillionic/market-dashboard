@@ -816,7 +816,7 @@
     return dates.map(dt => `${String(dt.getMonth()+1).padStart(2,'0')}.${String(dt.getDate()).padStart(2,'0')}`);
   }
 
-  function renderTrendChart(elId, values, dates, upColorVar, downColorVar){
+  function renderTrendChart(elId, values, dates, colorVar){
     const el = document.getElementById(elId);
     if(!el) return;
     if(!Array.isArray(values) || values.length < 2){ el.innerHTML = ""; return; }
@@ -828,9 +828,6 @@
     const range = (max - min) || 1;
     const x = i => padX + (i/(n-1)) * (W - padX*2);
     const y = v => padTop + (1 - (v-min)/range) * plotH;
-
-    const isUp = values[n-1] >= values[0];
-    const colorVar = isUp ? upColorVar : downColorVar;
 
     const points = values.map((v,i) => [x(i), y(v)]);
     const linePath = "M" + points.map(p => p.join(",")).join(" L");
@@ -896,14 +893,14 @@
     renderTicker();
 
     renderIndexRow("kr-index-row", DATA.kr.indices);
-    renderTrendChart("kr-trend", DATA.kr.history, genBusinessDates("2026-08-07", (DATA.kr.history || []).length), "--kr-up", "--kr-down");
+    renderTrendChart("kr-trend", DATA.kr.history, genBusinessDates("2026-08-07", (DATA.kr.history || []).length), "--gold");
     document.getElementById("kr-breadth").innerHTML = DATA.kr.breadth;
     document.getElementById("kr-briefing-source").textContent = DATA.kr.briefingSource;
     document.getElementById("kr-briefing").innerHTML = DATA.kr.briefing;
     renderSectorSection("kr-sector-bars", "kr-sector-reasons", DATA.kr.sectorsTop, DATA.kr.sectorsBottom);
 
     renderIndexRow("us-index-row", DATA.us.indices);
-    renderTrendChart("us-trend", DATA.us.history, genBusinessDates("2026-08-07", (DATA.us.history || []).length), "--us-up", "--us-down");
+    renderTrendChart("us-trend", DATA.us.history, genBusinessDates("2026-08-07", (DATA.us.history || []).length), "--gold");
     document.getElementById("us-breadth").innerHTML = DATA.us.breadth;
     document.getElementById("us-briefing-source").textContent = DATA.us.briefingSource;
     document.getElementById("us-briefing").innerHTML = DATA.us.briefing;
