@@ -429,6 +429,21 @@ module.exports = async function handler(req, res) {
     return;
   }
 
+  // 진단용: ?debugRaw=1 로 호출하면 Claude 호출 없이 텔레그램에서 실제로 가져온 원문 그대로 보여줍니다.
+  // (국내/해외 내용이 뒤바뀌어 보일 때, 소스 자체 문제인지 Claude 문제인지 구분하는 용도)
+  if (req.query.debugRaw) {
+    try {
+      const [krRaw, usRaw] = await Promise.all([
+        fetchLatestPost("shStrategy"),
+        fetchLatestPost("ehdwl"),
+      ]);
+      res.status(200).json({ krRaw, usRaw });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+    return;
+  }
+
   // 진단용: ?debugMarket=1 로 호출하면 새 "시장" 섹션 형식만 미리 확인합니다.
   // (Claude 호출은 발생하지만 노션에는 올리지 않습니다 — 형식 검증용.)
   if (req.query.debugMarket) {
