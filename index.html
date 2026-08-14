@@ -335,7 +335,7 @@
       <div class="panel-head" style="display:flex; justify-content:space-between; align-items:flex-end;">
         <div>
           <span class="eyebrow">Korea</span>
-          <h2>코스피 · 코스닥 · 원/달러</h2>
+          <h2>코스피 · 코스닥 · USD/KRW</h2>
         </div>
         <span class="badge snapshot" id="krMarketBadge" style="margin-bottom:2px;"></span>
       </div>
@@ -934,7 +934,7 @@
 
   /* ---------- 추이 차트 (스파크라인) ---------- */
   const selectedTrend = { kr: "KOSPI", us: "S&P 500" }; // 현재 각 패널에서 클릭으로 선택된 지수
-  const KR_TREND_LABELS = { KOSPI: "코스피", KOSDAQ: "코스닥", "USD/KRW": "원/달러" };
+  const KR_TREND_LABELS = { KOSPI: "코스피", KOSDAQ: "코스닥" }; // USD/KRW는 매핑 없이 원래 이름 그대로 표시
 
   function selectTrendIndex(panel, name){
     selectedTrend[panel] = name;
