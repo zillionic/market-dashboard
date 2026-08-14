@@ -474,6 +474,7 @@
   const KR_INDICES_API = "/api/kr-indices";
   const US_INDICES_API = "/api/us-indices";
   const BRIEFING_API = "/api/briefing";
+  const KR_SECTOR_REASONS_API = "/api/kr-sector-reasons";
 
   function fmtNum(n, digits = 2){
     return n.toLocaleString("ko-KR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
@@ -675,6 +676,26 @@
       }
     } catch (err) {
       console.warn("시황 코멘트 자동 갱신 실패, 스냅샷 값을 유지합니다:", err);
+    }
+
+    // ---- [국내 업종 이유 온디맨드 보완] ----
+    // cron이 아침에 만들어둔 이유가 지금 실시간 업종 목록과 이름이 안 맞을 수 있어서
+    // (KRX가 데이터를 늦게 올리면 당일 업종 순위가 바뀔 수 있음), 지금 실제 화면에 뜨는
+    // 업종 전체를 서버에 다시 확인시킵니다. 서버가 당일 캐시에 이미 있는 업종은 그대로
+    // 반환(무료)하고, 정말 새로 나타난 업종만 그때 Claude로 채워서 캐시에 저장합니다.
+    try {
+      const currentSectors = [...DATA.kr.sectorsTop, ...DATA.kr.sectorsBottom].map(s => ({ name: s.name, pct: s.pct }));
+      const res = await fetch(`${KR_SECTOR_REASONS_API}?sectors=${encodeURIComponent(JSON.stringify(currentSectors))}`, { cache: "no-store" });
+      if (res.ok) {
+        const reasonMap = await res.json();
+        [...DATA.kr.sectorsTop, ...DATA.kr.sectorsBottom].forEach(s => {
+          if (reasonMap[s.name]) s.reason = reasonMap[s.name];
+        });
+      } else {
+        console.warn("kr-sector-reasons API 응답 실패:", res.status);
+      }
+    } catch (err) {
+      console.warn("업종 이유 온디맨드 보완 실패, 기존 값을 유지합니다:", err);
     }
 
     // ---- [해외 업종 등락률] Finviz — 공식 무료 API는 없음(Elite 구독형, finviz.com/elite). ----
