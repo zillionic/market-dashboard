@@ -18,21 +18,26 @@
     --ink-dim:#8c93a3;
     --ink-faint:#5a6070;
     --gold:#c9a227;
+    --gold-rgb:201,162,39;
     --kr-up:#2fa84f;
     --kr-down:#e0393e;
     --us-up:#2fa84f;
     --us-down:#e0393e;
   }
+  /* 라이트 테마: "Terminal Slate" 팔레트 — 슬레이트 그레이 배경 + 인디고 블루 포인트.
+     --gold 변수명은 그대로 두되(코드 전반에서 "포인트색"으로 재사용되는 이름이라
+     한 번에 바꾸기엔 참조가 많음) 라이트 모드 값만 블루 계열로 교체했습니다. */
   html[data-theme="light"]{
-    --bg:#f3f1ea;
+    --bg:#f2f4f7;
     --panel:#ffffff;
-    --panel-2:#f7f5ee;
-    --line:#ddd8c8;
-    --line-soft:#e9e5d8;
-    --ink:#1c1e24;
-    --ink-dim:#5c5f6b;
-    --ink-faint:#8b8e98;
-    --gold:#a3760f;
+    --panel-2:#eef1f5;
+    --line:#dbe1e8;
+    --line-soft:#e7ebf0;
+    --ink:#10141c;
+    --ink-dim:#4d5566;
+    --ink-faint:#868f9e;
+    --gold:#2f6fed;
+    --gold-rgb:47,111,237;
     --kr-up:#1f7a3d;
     --kr-down:#c22a2f;
     --us-up:#1f7a3d;
@@ -128,7 +133,7 @@
     display:inline-block; font-size:10.5px; padding:2px 8px; border-radius:999px;
     margin-top:5px; font-family:'JetBrains Mono', monospace; letter-spacing:0.03em;
   }
-  .badge.snapshot{ background: rgba(201,162,39,0.15); color: var(--gold); border:1px solid rgba(201,162,39,0.35); }
+  .badge.snapshot{ background: rgba(var(--gold-rgb),0.15); color: var(--gold); border:1px solid rgba(var(--gold-rgb),0.35); }
   .badge.live{ background: rgba(47,168,79,0.15); color: var(--us-up); border:1px solid rgba(47,168,79,0.35); }
 
   /* ---------- ticker ---------- */
@@ -193,7 +198,7 @@
     transition: border-color 0.15s ease, background-color 0.15s ease;
   }
   .index-card:hover{ border-color: var(--gold); }
-  .index-card.active{ border-color: var(--gold); background: rgba(201,162,39,0.08); }
+  .index-card.active{ border-color: var(--gold); background: rgba(var(--gold-rgb),0.08); }
   .index-card .name{ font-size:12px; color:var(--ink-dim); margin-bottom:6px; }
   .index-card .value{ font-size:22px; font-weight:700; letter-spacing:-0.01em; }
   .index-card .delta{ font-size:13px; margin-top:3px; font-weight:600; }
