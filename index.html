@@ -18,8 +18,8 @@
     --ink-dim:#8c93a3;
     --ink-faint:#5a6070;
     --gold:#c9a227;
-    --kr-up:#e0393e;
-    --kr-down:#3b7ddb;
+    --kr-up:#2fa84f;
+    --kr-down:#e0393e;
     --us-up:#2fa84f;
     --us-down:#e0393e;
   }
@@ -33,8 +33,8 @@
     --ink-dim:#5c5f6b;
     --ink-faint:#8b8e98;
     --gold:#a3760f;
-    --kr-up:#c22a2f;
-    --kr-down:#1e5fa8;
+    --kr-up:#1f7a3d;
+    --kr-down:#c22a2f;
     --us-up:#1f7a3d;
     --us-down:#c22a2f;
   }
@@ -73,7 +73,7 @@
     width:100%; padding:10px; border-radius:6px; border:none;
     background: var(--gold); color:#141414; font-weight:700; font-size:14px; cursor:pointer;
   }
-  #gate .err{ color: var(--kr-up); font-size:12.5px; min-height:16px; }
+  #gate .err{ color: var(--kr-down); font-size:12.5px; min-height:16px; }
   #gate .hint{ color: var(--ink-faint); font-size:11.5px; margin-top:4px; }
   body.locked #app{ display:none; }
   body.unlocked #gate{ display:none; }
@@ -105,7 +105,8 @@
   }
   .masthead .meta{ text-align:right; }
   .theme-toggle{
-    display:inline-flex; align-items:center; gap:5px;
+    display:inline-flex; align-items:center; justify-content:center; gap:5px;
+    width:78px;
     font-family:'JetBrains Mono', monospace; font-size:11px;
     background: var(--panel-2); border:1px solid var(--line);
     color: var(--ink-dim); padding:5px 10px; border-radius:999px;
@@ -335,14 +336,14 @@
       <div class="panel-head" style="display:flex; justify-content:space-between; align-items:flex-end;">
         <div>
           <span class="eyebrow">Korea</span>
-          <h2>코스피 · 코스닥 · USD/KRW</h2>
+          <h2>KOSPI · KOSDAQ · USD/KRW</h2>
         </div>
         <span class="badge snapshot" id="krMarketBadge" style="margin-bottom:2px;"></span>
       </div>
 
       <div class="index-row" id="kr-index-row"></div>
 
-      <div class="sub" id="kr-trend-label">코스피 20거래일 추이</div>
+      <div class="sub" id="kr-trend-label">KOSPI 20거래일 추이</div>
       <div class="trend-chart" id="kr-trend"></div>
 
       <div class="fx-line" id="kr-breadth"></div>
@@ -934,7 +935,6 @@
 
   /* ---------- 추이 차트 (스파크라인) ---------- */
   const selectedTrend = { kr: "KOSPI", us: "S&P 500" }; // 현재 각 패널에서 클릭으로 선택된 지수
-  const KR_TREND_LABELS = { KOSPI: "코스피", KOSDAQ: "코스닥" }; // USD/KRW는 매핑 없이 원래 이름 그대로 표시
 
   function selectTrendIndex(panel, name){
     selectedTrend[panel] = name;
@@ -945,7 +945,7 @@
   function updateTrendChart(panel){
     const name = selectedTrend[panel];
     const history = (DATA[panel].history || {})[name] || [];
-    const label = panel === "kr" ? (KR_TREND_LABELS[name] || name) : name;
+    const label = name; // 지수 이름을 그대로 표시 (KOSPI/KOSDAQ/USD-KRW/S&P 500 등 원문 티커 그대로, 번역 없음)
     document.getElementById(`${panel}-trend-label`).textContent =
       history.length >= 2 ? `${label} ${history.length}거래일 추이` : `${label} 추이 (데이터 쌓는 중)`;
     renderTrendChart(`${panel}-trend`, history, "--gold");
