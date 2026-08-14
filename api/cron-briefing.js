@@ -107,9 +107,10 @@ const MACRO_RELEASE_KEYWORDS = [
   "New Residential Sales",
   "Consumer Confidence",
   "ISM",
-  "H.15 Selected Interest Rates",
-  "FOMC",
 ];
+// FRED의 "FOMC Press Release"·"H.15 Selected Interest Rates"는 실제 회의 일정이 아니라
+// 영업일마다(주말 포함으로 뜨는 경우도 있음) 갱신되는 시리즈라서 일부러 제외했습니다.
+// FOMC 회의 자체는 정책 결정이라 FRED "release"로 잡히지 않아 이 소스로는 가져올 수 없습니다.
 
 function nyDateStr(offsetDays = 0) {
   const d = new Date();
@@ -138,13 +139,21 @@ async function fetchMacroCalendar() {
 
   // 같은 release가 같은 날 중복으로 들어오는 경우가 있어 (date+name) 기준으로 dedup.
   const seen = new Set();
-  const events = [];
+  const deduped = [];
   for (const r of filtered) {
     const key = `${r.date}|${r.release_name}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    events.push({ date: r.date, name: r.release_name });
+    deduped.push({ date: r.date, name: r.release_name });
   }
+
+  // 안전장치: 정상적인 월간·분기 지표는 7일짜리 창에 한 번만 뜹니다. 키워드가
+  // 하필 매일·영업일마다 갱신되는 release(H.15류)와 겹쳐서 필터를 통과해도,
+  // 이 창 안에 두 번 이상 나오면 "이벤트성"이 아니라는 뜻이라 통째로 제외합니다.
+  const nameCounts = {};
+  deduped.forEach((e) => { nameCounts[e.name] = (nameCounts[e.name] || 0) + 1; });
+  const events = deduped.filter((e) => nameCounts[e.name] === 1);
+
   events.sort((a, b) => a.date.localeCompare(b.date));
   return events;
 }
