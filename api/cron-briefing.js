@@ -92,21 +92,22 @@ async function fetchIndexCloses() {
 // ============================================================================
 const FRED_API_KEY = process.env.FRED_API_KEY;
 
-// release_name에 아래 키워드가 포함된 것만 통과시킵니다 (대소문자 무관).
-// 새로운 지표를 더 보고 싶으면 이 목록에 키워드만 추가하면 됩니다.
-const MACRO_RELEASE_KEYWORDS = [
-  "Employment Situation",
-  "Consumer Price Index",
-  "Producer Price Index",
-  "Personal Income and Outlays",
-  "Advance Monthly Sales for Retail",
-  "Gross Domestic Product",
-  "Industrial Production",
-  "Housing Starts",
-  "Existing Home Sales",
-  "New Residential Sales",
-  "Consumer Confidence",
-  "ISM",
+// release_name에 keyword가 포함되면(대소문자 무관) 통과시키고, 대시보드에는 원문 대신
+// 한국에서 통용되는 이름(ko)으로 표시합니다. 새 지표를 더 보고 싶으면 이 목록에
+// { keyword, ko } 한 줄만 추가하면 필터링과 한글 표시명이 동시에 적용됩니다.
+const MACRO_RELEASES = [
+  { keyword: "Employment Situation", ko: "미국 고용보고서" },
+  { keyword: "Consumer Price Index", ko: "미국 소비자물가지수(CPI)" },
+  { keyword: "Producer Price Index", ko: "미국 생산자물가지수(PPI)" },
+  { keyword: "Personal Income and Outlays", ko: "미국 개인소득·지출(PCE 물가)" },
+  { keyword: "Advance Monthly Sales for Retail", ko: "미국 소매판매" },
+  { keyword: "Gross Domestic Product", ko: "미국 GDP(국내총생산)" },
+  { keyword: "Industrial Production", ko: "미국 산업생산·설비가동률" },
+  { keyword: "Housing Starts", ko: "미국 주택착공건수" },
+  { keyword: "Existing Home Sales", ko: "미국 기존주택판매" },
+  { keyword: "New Residential Sales", ko: "미국 신규주택판매" },
+  { keyword: "Consumer Confidence", ko: "미국 소비자신뢰지수" },
+  { keyword: "ISM", ko: "미국 ISM 제조업·서비스업 지수" },
 ];
 // FRED의 "FOMC Press Release"·"H.15 Selected Interest Rates"는 실제 회의 일정이 아니라
 // 영업일마다(주말 포함으로 뜨는 경우도 있음) 갱신되는 시리즈라서 일부러 제외했습니다.
@@ -132,27 +133,35 @@ async function fetchMacroCalendar() {
   const json = await res.json();
   const rows = json.release_dates || [];
 
-  const kwLower = MACRO_RELEASE_KEYWORDS.map((k) => k.toLowerCase());
-  const filtered = rows.filter((r) =>
-    kwLower.some((kw) => (r.release_name || "").toLowerCase().includes(kw))
-  );
+  // 원문 release_name으로 keyword를 찾아서, 필터 통과 여부와 한글 표시명(ko)을 동시에 얻습니다.
+  const matched = rows
+    .map((r) => {
+      const hit = MACRO_RELEASES.find((m) =>
+        (r.release_name || "").toLowerCase().includes(m.keyword.toLowerCase())
+      );
+      return hit ? { date: r.date, rawName: r.release_name, ko: hit.ko } : null;
+    })
+    .filter(Boolean);
 
-  // 같은 release가 같은 날 중복으로 들어오는 경우가 있어 (date+name) 기준으로 dedup.
+  // 같은 release가 같은 날 중복으로 들어오는 경우가 있어 (date+원문명) 기준으로 dedup.
   const seen = new Set();
   const deduped = [];
-  for (const r of filtered) {
-    const key = `${r.date}|${r.release_name}`;
+  for (const r of matched) {
+    const key = `${r.date}|${r.rawName}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    deduped.push({ date: r.date, name: r.release_name });
+    deduped.push(r);
   }
 
-  // 안전장치: 정상적인 월간·분기 지표는 7일짜리 창에 한 번만 뜹니다. 키워드가
-  // 하필 매일·영업일마다 갱신되는 release(H.15류)와 겹쳐서 필터를 통과해도,
-  // 이 창 안에 두 번 이상 나오면 "이벤트성"이 아니라는 뜻이라 통째로 제외합니다.
-  const nameCounts = {};
-  deduped.forEach((e) => { nameCounts[e.name] = (nameCounts[e.name] || 0) + 1; });
-  const events = deduped.filter((e) => nameCounts[e.name] === 1);
+  // 안전장치: 정상적인 월간·분기 지표는 7일짜리 창에 한 번만 뜹니다. 원문 release명 기준으로
+  // 두 번 이상 나오면(H.15류처럼 매일·영업일마다 갱신되는 release) 통째로 제외합니다.
+  // (한글 표시명이 아니라 원문 기준으로 세는 이유: 서로 다른 두 release가 우연히 같은
+  //  한글명에 매핑되는 경우까지 "중복"으로 오판해 지워버리는 걸 막기 위함입니다.)
+  const rawCounts = {};
+  deduped.forEach((e) => { rawCounts[e.rawName] = (rawCounts[e.rawName] || 0) + 1; });
+  const events = deduped
+    .filter((e) => rawCounts[e.rawName] === 1)
+    .map((e) => ({ date: e.date, name: e.ko }));
 
   events.sort((a, b) => a.date.localeCompare(b.date));
   return events;
