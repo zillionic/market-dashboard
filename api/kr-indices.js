@@ -15,6 +15,7 @@
 const SYMBOLS = {
   kospi: "^KS11",
   kosdaq: "^KQ11",
+  usdkrw: "KRW=X", // 원/달러 환율 (Yahoo Finance FX 심볼)
 };
 
 // TODO: 한국 공휴일까지 반영하려면 'YYYY-MM-DD'(한국 날짜 기준) 형식으로 추가하세요.
@@ -85,9 +86,10 @@ async function fetchOne(symbol) {
 
 module.exports = async function handler(req, res) {
   try {
-    const [kospi, kosdaq] = await Promise.all([
+    const [kospi, kosdaq, usdkrw] = await Promise.all([
       fetchOne(SYMBOLS.kospi),
       fetchOne(SYMBOLS.kosdaq),
+      fetchOne(SYMBOLS.usdkrw),
     ]);
 
     const marketState = getMarketState();
@@ -105,6 +107,7 @@ module.exports = async function handler(req, res) {
       asOfDate, // "YYYY-MM-DD"
       kospi,
       kosdaq,
+      usdkrw,
       updatedAt: new Date().toISOString(),
     });
   } catch (err) {
