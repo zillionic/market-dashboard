@@ -137,13 +137,22 @@
   .badge.live{ background: rgba(47,168,79,0.15); color: var(--us-up); border:1px solid rgba(47,168,79,0.35); }
 
   /* ---------- ticker ---------- */
-  .ticker{
-    display:flex;
-    overflow-x:auto;
+  .ticker-wrap{
+    overflow: hidden;
     border: 1px solid var(--line);
     background: var(--panel);
     border-radius: 8px;
     margin-bottom: 26px;
+  }
+  .ticker{
+    display:flex;
+    width: fit-content;
+    animation: ticker-scroll 45s linear infinite;
+  }
+  .ticker:hover{ animation-play-state: paused; }
+  @keyframes ticker-scroll{
+    from{ transform: translateX(0); }
+    to{ transform: translateX(-50%); }
   }
   .tick{
     padding: 12px 20px;
@@ -318,7 +327,9 @@
     </div>
   </header>
 
-  <section class="ticker" id="ticker"></section>
+  <div class="ticker-wrap">
+    <section class="ticker" id="ticker"></section>
+  </div>
 
   <section class="macro-calendar" id="macroCalendar">
     <div class="macro-cal-head">
@@ -470,6 +481,9 @@
       { name:"S&P 500", value:"7,757.64",   delta:"▲47.68 (+0.62%)", cls:"up-us" },
       { name:"NASDAQ",  value:"26,690.62",  delta:"▲342.27 (+1.30%)",cls:"up-us" },
       { name:"DOW",     value:"54,036.93",  delta:"▲151.83 (+0.28%)",cls:"up-us" },
+      { name:"WTI",     value:"$63.42",     delta:"▼0.85 (-1.32%)",  cls:"down-us" },
+      { name:"GOLD",    value:"$2,345.60",  delta:"▲12.30 (+0.53%)", cls:"up-us" },
+      { name:"BTC",     value:"$114,320.00",delta:"▲1,204.50 (+1.06%)", cls:"up-us" },
     ],
     kr: {
       indices: [
@@ -542,6 +556,7 @@
   const KR_SECTOR_REASONS_API = "/api/kr-sector-reasons";
   const HISTORY_API = "/api/history";
   const MACRO_CALENDAR_API = "/api/macro-calendar";
+  const EXTRA_TICKERS_API = "/api/extra-tickers";
 
   function fmtNum(n, digits = 2){
     return n.toLocaleString("ko-KR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
@@ -842,12 +857,39 @@
   // 자동화하려면 완전 무료 대안으로 섹터 ETF(XLB·XLK·XLRE·XLI·XLV·XLY·XLU·XLF·XLP·XLC·XLE) 일별 종가를
   // stooq.com CSV로 받아 전일 대비 등락률을 직접 계산하는 방법이 있습니다 (us-indices.js와 같은 패턴).
 
+  // ---- [유가·금·비트코인] 상단 티커에만 표시 (Yahoo Finance, 실제 연동됨) ----
+  async function fetchExtraTickersRaw(){
+    try {
+      const res = await fetch(EXTRA_TICKERS_API, { cache: "no-store" });
+      if (!res.ok) { console.warn("extra-tickers API 응답 실패:", res.status); return null; }
+      return await res.json();
+    } catch (err) {
+      console.warn("유가·금·비트코인 실시간 연동 실패, 스냅샷 값을 유지합니다:", err);
+      return null;
+    }
+  }
+  function applyExtraTickers(json){
+    if(!json) return;
+    const rows = [
+      { key: "oil", name: "WTI" },
+      { key: "gold", name: "GOLD" },
+      { key: "btc", name: "BTC" },
+    ];
+    rows.forEach(({ key, name }) => {
+      const r = json[key];
+      if (!r || !Number.isFinite(r.close) || !Number.isFinite(r.pct)) return;
+      const d = fmtDelta(r.change ?? 0, r.pct, { up: "up-us", down: "down-us" });
+      const t = DATA.ticker.find(t => t.name === name);
+      if (t) { t.value = `$${fmtNum(r.close)}`; t.delta = d.long; t.cls = d.cls; }
+    });
+  }
+
   // 서로 의존관계 없는 요청들은 동시에 시작해서 로딩 시간을 줄이고, DATA에 실제로 반영하는
   // 순서만 기존과 동일하게 유지합니다(예: Yahoo 지수 값이 항상 KRX 값 위에 마지막으로
   // 덮어써야 하는 것처럼). 국내 업종 이유 온디맨드 보완만 최종 업종 목록이 필요해서 예외적으로
   // 나머지가 다 끝난 뒤 마지막에 따로 호출합니다.
   async function fetchLiveData(){
-    const [krMarketResult, breadthJson, usIndicesJson, krIndicesJson, briefingJson, historyJson, macroJson] =
+    const [krMarketResult, breadthJson, usIndicesJson, krIndicesJson, briefingJson, historyJson, macroJson, extraTickersJson] =
       await Promise.all([
         fetchKrMarketBoth(),
         fetchBreadthRaw(),
@@ -856,12 +898,14 @@
         fetchBriefingRaw(),
         fetchHistoryRaw(),
         fetchMacroRaw(),
+        fetchExtraTickersRaw(),
       ]);
 
     const { krBasDd } = applyKrMarket(krMarketResult);
     applyBreadth(breadthJson);
     const { usMarketState } = applyUsIndices(usIndicesJson);
     const { krMarketState, krIndexAsOfDate } = applyKrIndices(krIndicesJson);
+    applyExtraTickers(extraTickersJson);
     updateMarketBadges(krBasDd, krMarketState, krIndexAsOfDate, usMarketState);
     applyBriefing(briefingJson);
     applyHistory(historyJson);
@@ -875,13 +919,17 @@
      3. 렌더링
      ============================================================ */
   function renderTicker(){
-    document.getElementById("ticker").innerHTML = DATA.ticker.map(t => `
+    // translateX(-50%) 애니메이션이 자연스럽게 이어지려면 목록을 정확히 두 번 이어붙여야 합니다
+    // (절반 지점에서 첫 세트가 끝나고 똑같은 두 번째 세트가 시작하니 끊김 없이 반복됩니다).
+    const tick = t => `
       <div class="tick">
         <span class="name">${t.name}</span>
         <span class="val mono">${t.value}</span>
         <span class="delta mono ${t.cls}">${t.delta}</span>
       </div>
-    `).join("");
+    `;
+    document.getElementById("ticker").innerHTML =
+      DATA.ticker.map(tick).join("") + DATA.ticker.map(tick).join("");
   }
 
   // 시황 코멘트는 "줄1<br>줄2<br>..." 형태 문자열로 옵니다 (cron-briefing.js의 summarize() 참고).
