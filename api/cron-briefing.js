@@ -73,16 +73,42 @@ async function appendIndexHistory(historyKey, dateStr, close) {
   await redisSet(`history:${historyKey}`, history);
 }
 
-// 같은 배포 안의 지수 API를 재사용해서 오늘자 종가를 가져옵니다.
+// Yahoo Finance에서 오늘자 지수/환율 종가를 직접 가져옵니다.
+// (예전엔 같은 배포의 /api/kr-indices, /api/us-indices를 VERCEL_URL로 다시 호출하는
+//  방식이었는데, Vercel Deployment Protection이 이런 서버 대 서버 내부 요청을 로그인
+//  페이지로 가로채면서 JSON 파싱이 "Unexpected token '<'"로 조용히 실패해 히스토리가
+//  전혀 안 쌓이는 문제가 있었습니다. 외부 API를 직접 호출하면 이 문제와 무관해집니다.)
+async function fetchYahooQuote(symbol) {
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`;
+  const res = await fetch(url, {
+    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
+  });
+  if (!res.ok) throw new Error(`Yahoo Finance 응답 실패 (${symbol}, ${res.status})`);
+  const json = await res.json();
+  const meta = json?.chart?.result?.[0]?.meta;
+  if (!meta || !Number.isFinite(meta.regularMarketPrice)) throw new Error(`Yahoo Finance 데이터 없음: ${symbol}`);
+  return { close: Number(meta.regularMarketPrice.toFixed(2)), regularMarketTime: meta.regularMarketTime || null };
+}
+
 async function fetchIndexCloses() {
-  const base = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "";
-  const [krRes, usRes] = await Promise.all([
-    fetch(`${base}/api/kr-indices`),
-    fetch(`${base}/api/us-indices`),
+  const [kospi, kosdaq, usdkrw, sp500, nasdaq, dow] = await Promise.all([
+    fetchYahooQuote("^KS11"),
+    fetchYahooQuote("^KQ11"),
+    fetchYahooQuote("KRW=X"),
+    fetchYahooQuote("^GSPC"),
+    fetchYahooQuote("^IXIC"),
+    fetchYahooQuote("^DJI"),
   ]);
-  if (!krRes.ok) throw new Error(`kr-indices 조회 실패: ${krRes.status}`);
-  if (!usRes.ok) throw new Error(`us-indices 조회 실패: ${usRes.status}`);
-  return { kr: await krRes.json(), us: await usRes.json() };
+  const krAsOfDate = kospi.regularMarketTime
+    ? new Date(kospi.regularMarketTime * 1000).toLocaleDateString("en-CA", { timeZone: "Asia/Seoul" })
+    : null;
+  const usAsOfDate = sp500.regularMarketTime
+    ? new Date(sp500.regularMarketTime * 1000).toLocaleDateString("en-CA", { timeZone: "America/New_York" })
+    : null;
+  return {
+    kr: { asOfDate: krAsOfDate, kospi, kosdaq, usdkrw },
+    us: { asOfDate: usAsOfDate, sp500, nasdaq, dow },
+  };
 }
 
 // ============================================================================
@@ -268,13 +294,62 @@ function isWeekendKST() {
   return day === 0 || KR_HOLIDAYS.includes(iso);
 }
 
-// 같은 배포 안의 /api/kr-sectors를 호출해서 오늘 실제 업종 TOP5/BOTTOM5 숫자를 가져옵니다.
+// KRX Open API에서 오늘 KOSPI 업종 TOP5/BOTTOM5를 직접 가져옵니다 (api/kr-sectors.js와
+// 로직은 같지만, fetchIndexCloses()와 같은 이유로 자기 자신을 다시 호출하지 않습니다).
+const KRX_AUTH_KEY = process.env.KRX_AUTH_KEY;
+const KRX_KOSPI_ENDPOINT = "https://data-dbg.krx.co.kr/svc/apis/idx/kospi_dd_trd";
+const KRX_EXCLUDE_NAME_KEYWORDS = [
+  "코스피", "코스닥",
+  "대형주", "중형주", "소형주",
+  "200", "100", "50", "150",
+  "고배당", "배당성장", "우량기업",
+];
+
+function isKrCompositeOrSizeIndex(name) {
+  const trimmed = name.trim();
+  if (trimmed === "코스피" || trimmed === "코스닥") return true;
+  return KRX_EXCLUDE_NAME_KEYWORDS.some((kw) => trimmed.includes(kw));
+}
+
+function toBasDd(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const dd = String(d.getDate()).padStart(2, "0");
+  return `${y}${m}${dd}`;
+}
+
+// 오늘부터 하루씩 거슬러 올라가며 시도할 날짜 후보 목록 (주말은 건너뜀, KRX 데이터 처리 지연 대비).
+function krxCandidateDates(maxDays = 7) {
+  const dates = [];
+  const d = new Date();
+  while (dates.length < maxDays) {
+    const day = d.getDay();
+    if (day !== 0 && day !== 6) dates.push(toBasDd(d));
+    d.setDate(d.getDate() - 1);
+  }
+  return dates;
+}
+
 async function fetchKrSectors() {
-  const base = process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "";
-  const res = await fetch(`${base}/api/kr-sectors?market=KOSPI`);
-  if (!res.ok) throw new Error(`kr-sectors 조회 실패: ${res.status}`);
-  const json = await res.json();
-  return { top5: json.top5 || [], bottom5: json.bottom5 || [] };
+  if (!KRX_AUTH_KEY) throw new Error("KRX_AUTH_KEY 환경변수가 설정되지 않았습니다.");
+
+  let rows = [];
+  for (const basDd of krxCandidateDates(7)) {
+    const res = await fetch(`${KRX_KOSPI_ENDPOINT}?basDd=${basDd}`, { headers: { AUTH_KEY: KRX_AUTH_KEY } });
+    if (!res.ok) continue;
+    const data = await res.json();
+    const result = data.OutBlock_1 || [];
+    if (result.length > 0) { rows = result; break; }
+  }
+  if (rows.length === 0) throw new Error("최근 7일 이내 발표된 KRX 업종 데이터를 찾지 못했습니다.");
+
+  const sectors = rows
+    .filter((r) => r.IDX_NM && !isKrCompositeOrSizeIndex(r.IDX_NM))
+    .map((r) => ({ name: r.IDX_NM.trim(), pct: Number(r.FLUC_RT), close: Number(r.CLSPRC_IDX) }))
+    .filter((r) => !Number.isNaN(r.pct));
+  sectors.sort((a, b) => b.pct - a.pct);
+
+  return { top5: sectors.slice(0, 5), bottom5: sectors.slice(-5).reverse() };
 }
 
 // 업종 TOP5/BOTTOM5 각각에 대해 "왜 그렇게 움직였는지" 한 줄 이유를 Claude가 생성합니다.
@@ -660,6 +735,19 @@ module.exports = async function handler(req, res) {
         kr: { asOfDate: kr.asOfDate, kospi: kr.kospi, kosdaq: kr.kosdaq, usdkrw: kr.usdkrw },
         us: { asOfDate: us.asOfDate, sp500: us.sp500, nasdaq: us.nasdaq, dow: us.dow },
       });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+    return;
+  }
+
+  // 진단용: ?debugKrSectors=1 로 호출하면 KRX에서 가져온 KOSPI 업종 TOP5/BOTTOM5만 확인합니다
+  // (Upstash에 쓰지 않음, 비용 없음). fetchKrSectors()가 내부 자기 호출 대신 KRX를 직접
+  // 부르도록 고친 뒤 실제로 잘 도는지 확인할 때 씁니다.
+  if (req.query.debugKrSectors) {
+    try {
+      const { top5, bottom5 } = await fetchKrSectors();
+      res.status(200).json({ top5, bottom5 });
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }
