@@ -111,6 +111,11 @@ ${sectorList}
   return JSON.parse(cleaned);
 }
 
+// 실제 대시보드는 코스피 TOP5+BOTTOM5(10개)만 보냅니다. 이보다 훨씬 큰 요청이나, 캐시에
+// 없는 이름을 계속 다르게 넣어서 매번 새로 Claude를 부르게 만드는 남용을 막기 위한 상한선.
+const MAX_SECTORS_PER_REQUEST = 15;
+const MAX_CACHED_SECTORS_PER_DAY = 50; // 실제 코스피 업종은 20여 개뿐이라 하루치로 충분히 넉넉한 상한
+
 module.exports = async function handler(req, res) {
   let requested;
   try {
@@ -121,6 +126,10 @@ module.exports = async function handler(req, res) {
   }
   if (!Array.isArray(requested) || requested.length === 0) {
     res.status(400).json({ error: "sectors 파라미터가 비어있습니다." });
+    return;
+  }
+  if (requested.length > MAX_SECTORS_PER_REQUEST) {
+    res.status(400).json({ error: `sectors는 한 번에 최대 ${MAX_SECTORS_PER_REQUEST}개까지만 요청할 수 있습니다.` });
     return;
   }
 
@@ -136,7 +145,10 @@ module.exports = async function handler(req, res) {
 
     const missing = requested.filter((s) => !cache[s.name]);
 
-    if (missing.length > 0) {
+    // 하루 캐시가 이미 충분히 찼으면(비정상적으로 많은 서로 다른 이름이 들어왔다는 뜻) 더 이상
+    // Claude를 부르지 않고, 이미 캐시에 있는 것만 돌려줍니다 — 실제 사용 패턴에서는 절대
+    // 도달하지 않는 상한이라 정상 트래픽에는 영향이 없습니다.
+    if (missing.length > 0 && Object.keys(cache).length < MAX_CACHED_SECTORS_PER_DAY) {
       const krRaw = await fetchKrRaw();
       const newReasons = await generateReasonsFor(missing, krRaw);
       newReasons.forEach((r) => { cache[r.name] = r.reason; });
