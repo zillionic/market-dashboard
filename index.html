@@ -178,27 +178,32 @@
   }
   .macro-cal-head{ margin-bottom: 12px; }
   .macro-cal-head h2{ font-size: 15px; font-weight: 700; letter-spacing: -0.01em; }
-  .macro-cal-list{ display:flex; flex-wrap:wrap; gap: 10px; }
+  /* 실적 캘린더와 동일하게 항목마다 한 줄씩 세로로 쌓습니다(예전엔 칩이 flex-wrap으로
+     여러 개가 한 줄에 같이 들어갔는데, 날짜별로 스캔하기 어려워서 통일했습니다). */
+  .macro-cal-list{ display:flex; flex-direction:column; gap:7px; }
   .macro-cal-item{
-    display:flex; align-items:baseline; gap: 8px;
+    display:flex; align-items:center; gap:10px;
     background: var(--panel-2); border: 1px solid var(--line-soft);
-    border-radius: 8px; padding: 7px 12px; font-size: 12.5px;
+    border-radius: 8px; padding: 8px 12px; font-size: 12.5px;
   }
-  .macro-cal-item .date{ font-family:'JetBrains Mono', monospace; color: var(--gold); font-weight:700; white-space:nowrap; }
-  .macro-cal-item .name{ color: var(--ink); }
+  .macro-cal-item .date{
+    font-family:'JetBrains Mono', monospace; color: var(--gold); font-weight:700;
+    white-space:nowrap; width:76px; flex-shrink:0; margin-right:8px;
+  }
+  .macro-cal-item .name{ flex:1; color: var(--ink); min-width:0; }
+  .macro-cal-item .value{ display:flex; align-items:center; gap:6px; flex-shrink:0; }
   .macro-cal-item .period{
     font-size: 10.5px; font-weight:700; color: var(--ink-faint);
-    border: 1px solid var(--line-soft); border-radius: 4px; padding: 1px 5px;
+    border: 1px solid var(--line-soft); border-radius: 4px; padding: 1px 5px; white-space:nowrap;
   }
   .macro-cal-item .actual{ font-family:'JetBrains Mono', monospace; font-weight:700; color: var(--ink); white-space:nowrap; }
   .macro-cal-item .previous{ font-family:'JetBrains Mono', monospace; color: var(--ink-faint); white-space:nowrap; }
   .macro-cal-empty{ color: var(--ink-faint); font-size: 12.5px; }
-  /* 좁은 화면에서는 칩 안의 날짜·이름·발표치·직전치가 한 줄에 다 들어가려다 보니
-     이름(name)만 거의 0폭으로 눌려서 한 글자씩 줄바꿈되던 문제가 있었습니다.
-     칩을 한 줄 전체 폭으로 넓히고, 칩 내부도 필요하면 줄바꿈되게 해서 이름이 최소 한
-     줄의 절반 이상은 쓸 수 있게 합니다. */
+  /* 좁은 화면에서는 date+name+value가 한 줄에 다 안 들어가면 name(flex:1, min-width:0)이
+     거의 0폭까지 눌려서 한 글자씩 줄바꿈되던(예전 칩 레이아웃과 같은) 문제가 있어서,
+     줄 안에서 필요하면 value가 다음 줄로 넘어가게 합니다. */
   @media (max-width: 480px){
-    .macro-cal-item{ width: 100%; flex-wrap: wrap; row-gap: 2px; }
+    .macro-cal-item{ flex-wrap: wrap; row-gap: 4px; }
   }
 
   /* ---------- 매크로/실적 탭 전환 ---------- */
@@ -1204,9 +1209,11 @@
       <div class="macro-cal-item">
         <span class="date mono">${formatShortKoreanDate(e.date)}</span>
         <span class="name">${e.name}</span>
-        ${e.period ? `<span class="period mono">${e.period}</span>` : ""}
-        ${e.actual ? `<span class="actual mono">${e.actual}</span>` : ""}
-        ${e.previous ? `<span class="previous mono">(직전 ${e.previous})</span>` : ""}
+        <span class="value">
+          ${e.period ? `<span class="period mono">${e.period}</span>` : ""}
+          ${e.actual ? `<span class="actual mono">${e.actual}</span>` : ""}
+          ${e.previous ? `<span class="previous mono">(직전 ${e.previous})</span>` : ""}
+        </span>
       </div>
     `).join("");
   }
