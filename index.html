@@ -303,8 +303,23 @@
   .index-card .value{ font-size:22px; font-weight:700; letter-spacing:-0.01em; }
   .index-card .delta{ font-size:13px; margin-top:3px; font-weight:600; white-space:nowrap; }
 
-  .fx-line{ font-size: 13px; color: var(--ink-dim); margin-bottom: 16px; }
-  .fx-line .mono{ color: var(--ink); }
+  /* 등락 종목 비율 막대 (국내만 라이브 데이터가 있어 국내에만 적용) */
+  .breadth-bars{ display:flex; flex-direction:column; gap:8px; margin-bottom:16px; }
+  .breadth-row{ display:flex; align-items:center; gap:8px; }
+  .breadth-row .market{ font-size:11.5px; font-weight:600; width:38px; flex-shrink:0; color:var(--ink-dim); }
+  .breadth-row .count{ font-size:11px; font-weight:700; white-space:nowrap; width:58px; flex-shrink:0; }
+  .breadth-row .count.up{ color: var(--kr-up); }
+  .breadth-row .count.down{ color: var(--kr-down); text-align:right; }
+  .breadth-bar{ flex:1; height:6px; border-radius:3px; overflow:hidden; display:flex; background: var(--line-soft); }
+  .breadth-bar .seg-up{ background: var(--kr-up); height:100%; }
+  .breadth-bar .seg-down{ background: var(--kr-down); height:100%; }
+
+  /* 미국은 지수별(에센피/나스닥) 등락 종목 수를 구할 방법이 없어 breadth 자체를 없애되,
+     PC 폭(.grid가 2열인 861px~)에서는 국내 막대 블록과 같은 높이만 비워서 "시황" 줄 정렬을 맞춥니다. */
+  .fx-spacer{ display:none; }
+  @media (min-width: 861px){
+    .fx-spacer{ display:block; height:38px; margin-bottom:16px; }
+  }
 
   /* ---------- trend chart (sparkline) ---------- */
   .trend-chart{ position:relative; margin-bottom: 16px; }
@@ -466,7 +481,7 @@
       <div class="sub" id="kr-trend-label">KOSPI 20거래일 추이</div>
       <div class="trend-chart" id="kr-trend"></div>
 
-      <div class="fx-line" id="kr-breadth"></div>
+      <div class="breadth-bars" id="kr-breadth"></div>
 
       <div class="briefing briefing-top">
         <h3>시황</h3>
@@ -496,7 +511,7 @@
       <div class="sub" id="us-trend-label">S&amp;P 500 20거래일 추이</div>
       <div class="trend-chart" id="us-trend"></div>
 
-      <div class="fx-line" id="us-breadth"></div>
+      <div class="fx-spacer"></div>
 
       <div class="briefing briefing-top">
         <h3>시황</h3>
@@ -607,7 +622,10 @@
         { name:"KOSDAQ", value:"798.81",   delta:"▼2.86 (-0.36%)",  cls:"down-kr" },
         { name:"USD/KRW", value:"1,416.10", delta:"▼7.70원", cls:"down-kr" },
       ],
-      breadth: "등락 종목 비율 코스피 <span class=\"mono up-kr\">상승 554</span> : <span class=\"mono down-kr\">하락 322</span> · 코스닥 <span class=\"mono up-kr\">상승 808</span> : <span class=\"mono down-kr\">하락 829</span>",
+      breadth: [
+        { market: "코스피", up: 554, down: 322 },
+        { market: "코스닥", up: 808, down: 829 },
+      ],
       // cron-briefing.js가 매일 Upstash에 쌓는 실제 종가로 fetchLiveData()가 채웁니다.
       // 20거래일이 다 쌓이기 전까지는 그만큼만 짧게 표시됩니다.
       history: { KOSPI: [], KOSDAQ: [], "USD/KRW": [] },
@@ -633,7 +651,6 @@
         { name:"NASDAQ",  value:"26,690.62", delta:"▲342.27 (+1.30%)", cls:"up-us" },
         { name:"DOW",     value:"54,036.93", delta:"▲151.83 (+0.28%)", cls:"up-us" },
       ],
-      breadth: "등락 종목 비율 <span class=\"mono up-us\">상승 336</span> : <span class=\"mono down-us\">하락 167</span>",
       // cron-briefing.js가 매일 Upstash에 쌓는 실제 종가로 fetchLiveData()가 채웁니다.
       history: { "S&P 500": [], NASDAQ: [], DOW: [] },
       sectorsTop: [
@@ -754,11 +771,10 @@
   }
   function applyBreadth(j){
     if(!j || !j.kospi || !j.kosdaq) return;
-    DATA.kr.breadth =
-      `등락 종목 비율 코스피 <span class="mono up-kr">상승 ${j.kospi.up}</span> : ` +
-      `<span class="mono down-kr">하락 ${j.kospi.down}</span> · ` +
-      `코스닥 <span class="mono up-kr">상승 ${j.kosdaq.up}</span> : ` +
-      `<span class="mono down-kr">하락 ${j.kosdaq.down}</span>`;
+    DATA.kr.breadth = [
+      { market: "코스피", up: j.kospi.up, down: j.kospi.down },
+      { market: "코스닥", up: j.kosdaq.up, down: j.kosdaq.down },
+    ];
   }
 
   // ---- [해외 지수] Yahoo Finance (실제 연동됨, 무료·키 불필요) ----
@@ -1496,6 +1512,24 @@
     svg.addEventListener("touchcancel", hide);
   }
 
+  function renderBreadthBars(elId, rows){
+    document.getElementById(elId).innerHTML = rows.map(r => {
+      const total = r.up + r.down;
+      const upPct = total > 0 ? (r.up / total * 100).toFixed(1) : 50;
+      const downPct = (100 - upPct).toFixed(1);
+      return `
+        <div class="breadth-row">
+          <span class="market">${r.market}</span>
+          <span class="count up mono">상승 ${r.up}</span>
+          <div class="breadth-bar">
+            <div class="seg-up" style="width:${upPct}%"></div>
+            <div class="seg-down" style="width:${downPct}%"></div>
+          </div>
+          <span class="count down mono">하락 ${r.down}</span>
+        </div>`;
+    }).join("");
+  }
+
   function render(){
     renderDateStatus();
     document.getElementById("updatedAt").textContent = DATA.updatedAt;
@@ -1509,13 +1543,12 @@
 
     renderIndexRow("kr-index-row", DATA.kr.indices, "kr");
     updateTrendChart("kr");
-    document.getElementById("kr-breadth").innerHTML = DATA.kr.breadth;
+    renderBreadthBars("kr-breadth", DATA.kr.breadth);
     renderBriefing("kr-briefing", DATA.kr.briefing);
     renderSectorSection("kr-sector-bars", "kr-sector-reasons", DATA.kr.sectorsTop, DATA.kr.sectorsBottom);
 
     renderIndexRow("us-index-row", DATA.us.indices, "us");
     updateTrendChart("us");
-    document.getElementById("us-breadth").innerHTML = DATA.us.breadth;
     renderBriefing("us-briefing", DATA.us.briefing);
     renderSectorSection("us-sector-bars", "us-sector-reasons", DATA.us.sectorsTop, DATA.us.sectorsBottom);
 
