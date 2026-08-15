@@ -281,8 +281,16 @@
   }
 
   /* ---------- grid ---------- */
-  .grid{ display:grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+  .grid{ display:grid; grid-template-columns: 1fr 1fr; column-gap: 18px; row-gap: 18px; }
   @media (max-width: 860px){ .grid{ grid-template-columns: 1fr; } }
+
+  /* PC 폭에서는 국내·미국 패널이 같은 grid row 트랙을 공유(subgrid)해서, 시황 길이 같은
+     콘텐츠 차이로 아래 섹션(업종 히트맵 등)이 좌우로 어긋나지 않고 항상 같은 줄에서 시작합니다.
+     .panel의 직계 자식 11개(panel-head~sectorlist)가 국내/미국 양쪽에서 같은 순서로 있어야 합니다. */
+  @media (min-width: 861px){
+    .grid{ grid-template-rows: repeat(11, auto); row-gap: 0; }
+    .panel{ display:grid; grid-template-rows: subgrid; grid-row: 1 / span 11; }
+  }
 
   .panel{
     background: var(--panel); border: 1px solid var(--line);
@@ -314,12 +322,6 @@
   .breadth-bar .seg-up{ background: var(--kr-up); height:100%; }
   .breadth-bar .seg-down{ background: var(--kr-down); height:100%; }
 
-  /* 미국은 지수별(에센피/나스닥) 등락 종목 수를 구할 방법이 없어 breadth 자체를 없애되,
-     PC 폭(.grid가 2열인 861px~)에서는 국내 막대 블록과 같은 높이만 비워서 "시황" 줄 정렬을 맞춥니다. */
-  .fx-spacer{ display:none; }
-  @media (min-width: 861px){
-    .fx-spacer{ display:block; height:38px; margin-bottom:16px; }
-  }
 
   /* ---------- trend chart (sparkline) ---------- */
   .trend-chart{ position:relative; margin-bottom: 16px; }
@@ -511,6 +513,7 @@
       <div class="sub" id="us-trend-label">S&amp;P 500 20거래일 추이</div>
       <div class="trend-chart" id="us-trend"></div>
 
+      <!-- 미국은 breadth 데이터가 없어 빈 채로 두되, 국내 breadth-bars와 같은 grid row라 subgrid가 높이를 맞춰줍니다 -->
       <div class="fx-spacer"></div>
 
       <div class="briefing briefing-top">
