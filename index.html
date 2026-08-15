@@ -147,13 +147,11 @@
   .ticker{
     display:flex;
     width: fit-content;
-    animation: ticker-scroll 45s linear infinite;
+    cursor: grab;
+    touch-action: pan-y; /* 세로 스크롤은 브라우저 기본 동작에 맡기고, 가로 드래그만 JS가 처리 */
+    user-select: none;
   }
-  .ticker:hover{ animation-play-state: paused; }
-  @keyframes ticker-scroll{
-    from{ transform: translateX(0); }
-    to{ transform: translateX(-50%); }
-  }
+  .ticker.dragging{ cursor: grabbing; }
   .tick{
     padding: 12px 20px;
     border-right: 1px solid var(--line);
@@ -919,7 +917,7 @@
      3. 렌더링
      ============================================================ */
   function renderTicker(){
-    // translateX(-50%) 애니메이션이 자연스럽게 이어지려면 목록을 정확히 두 번 이어붙여야 합니다
+    // translateX 이동이 자연스럽게 이어지려면 목록을 정확히 두 번 이어붙여야 합니다
     // (절반 지점에서 첫 세트가 끝나고 똑같은 두 번째 세트가 시작하니 끊김 없이 반복됩니다).
     const tick = t => `
       <div class="tick">
@@ -928,8 +926,73 @@
         <span class="delta mono ${t.cls}">${t.delta}</span>
       </div>
     `;
-    document.getElementById("ticker").innerHTML =
-      DATA.ticker.map(tick).join("") + DATA.ticker.map(tick).join("");
+    const el = document.getElementById("ticker");
+    el.innerHTML = DATA.ticker.map(tick).join("") + DATA.ticker.map(tick).join("");
+
+    // 실시간 갱신으로 값 길이가 바뀌면 폭도 살짝 바뀔 수 있어서, 매번 다시 재봅니다.
+    tickerHalfWidth = el.scrollWidth / 2;
+    if (tickerHalfWidth > 0) tickerOffset = ((tickerOffset % tickerHalfWidth) + tickerHalfWidth) % tickerHalfWidth;
+    applyTickerTransform();
+  }
+
+  /* ---------- 상단 티커 마퀴: 자동으로 천천히 흐르면서, 마우스 드래그·터치 스와이프로도
+     좌우로 넘겨볼 수 있게 합니다 (지나간 티커나 아직 안 보인 티커를 직접 찾아보기용). ---------- */
+  const TICKER_SPEED_PX_PER_SEC = 40;
+  let tickerOffset = 0;      // 현재 스크롤 위치(px) — translateX(-tickerOffset)로 적용
+  let tickerHalfWidth = 0;   // 티커 목록 1세트분 폭 (이 값 기준으로 순환)
+  let tickerDragging = false;
+  let tickerHoverPaused = false;
+  let tickerDragStartX = 0;
+  let tickerDragStartOffset = 0;
+  let tickerLastFrameTime = null;
+
+  function applyTickerTransform(){
+    const el = document.getElementById("ticker");
+    if (el) el.style.transform = `translateX(${-tickerOffset}px)`;
+  }
+
+  function tickerFrame(now){
+    if (tickerHalfWidth > 0 && !tickerDragging && !tickerHoverPaused && tickerLastFrameTime !== null) {
+      const dt = (now - tickerLastFrameTime) / 1000;
+      tickerOffset = ((tickerOffset + TICKER_SPEED_PX_PER_SEC * dt) % tickerHalfWidth + tickerHalfWidth) % tickerHalfWidth;
+      applyTickerTransform();
+    }
+    tickerLastFrameTime = now;
+    requestAnimationFrame(tickerFrame);
+  }
+
+  function initTickerDrag(){
+    const el = document.getElementById("ticker");
+    if (!el) return;
+
+    el.addEventListener("pointerenter", () => { tickerHoverPaused = true; });
+    el.addEventListener("pointerleave", () => { tickerHoverPaused = false; });
+
+    el.addEventListener("pointerdown", (e) => {
+      tickerDragging = true;
+      tickerHoverPaused = true;
+      tickerDragStartX = e.clientX;
+      tickerDragStartOffset = tickerOffset;
+      el.classList.add("dragging");
+      el.setPointerCapture(e.pointerId);
+    });
+    el.addEventListener("pointermove", (e) => {
+      if (!tickerDragging || tickerHalfWidth <= 0) return;
+      const deltaX = e.clientX - tickerDragStartX;
+      // 오른쪽으로 끌면(deltaX>0) 지나간(이전) 티커가 보이도록 offset을 줄입니다.
+      tickerOffset = ((tickerDragStartOffset - deltaX) % tickerHalfWidth + tickerHalfWidth) % tickerHalfWidth;
+      applyTickerTransform();
+    });
+    const endDrag = (e) => {
+      if (!tickerDragging) return;
+      tickerDragging = false;
+      el.classList.remove("dragging");
+      try { el.releasePointerCapture(e.pointerId); } catch(err) { /* 이미 해제된 경우 무시 */ }
+    };
+    el.addEventListener("pointerup", endDrag);
+    el.addEventListener("pointercancel", endDrag);
+
+    requestAnimationFrame(tickerFrame);
   }
 
   // 시황 코멘트는 "줄1<br>줄2<br>..." 형태 문자열로 옵니다 (cron-briefing.js의 summarize() 참고).
@@ -1248,6 +1311,7 @@
     if(USE_LIVE_API){ await fetchLiveData(); }
     restoreSelectedTrend();
     render();
+    initTickerDrag();
     startAutoRefresh();
   })();
 </script>
