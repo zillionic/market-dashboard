@@ -43,7 +43,7 @@
     --us-up:#1f7a3d;
     --us-down:#c22a2f;
   }
-  html, body, .panel, .tick, .index-card, .barbase, .barbase-div, .tag{
+  html, body, .panel, .tick, .index-card, .barbase-div{
     transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease;
   }
   *{box-sizing:border-box; margin:0; padding:0;}
@@ -231,14 +231,6 @@
 
   .sub{ font-size: 12px; letter-spacing: 0.06em; color: var(--ink-faint); text-transform: uppercase; margin-bottom: 10px; }
 
-  .tags{ display:flex; flex-wrap:wrap; gap: 7px; margin-bottom: 16px; }
-  .tag{
-    font-size: 12.5px; padding: 5px 10px; border-radius: 999px;
-    border: 1px solid var(--line-soft); color: var(--ink); background: var(--panel-2);
-  }
-  .tag.up{ border-color: rgba(224,57,62,0.4); color:#ff8c8f; }
-  .tag.mixed{ border-color: rgba(140,147,163,0.4); color: var(--ink-dim); }
-
   .barlist{ margin-bottom: 16px; }
   .barrow{
     display:grid; grid-template-columns: 96px 1fr 62px; align-items:center;
@@ -247,8 +239,6 @@
   .barrow .label{ color: var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
   .barrow .val{ text-align:right; font-size:12.5px; font-weight:600; }
 
-  .barbase{ position:relative; height: 8px; background: var(--line-soft); border-radius: 3px; overflow:hidden; }
-  .bar-single{ position:absolute; top:0; left:0; height:100%; background: var(--kr-up); border-radius: 3px; }
   .barbase-div{ position:relative; height: 8px; border-radius: 3px; }
   .div-center{ position:absolute; left:50%; top:-3px; bottom:-3px; width:1px; background: var(--line); }
   .bar-div{ position:absolute; top:0; height:100%; }
@@ -264,9 +254,6 @@
   }
   .sector-row .head .pct{ font-size: 12.5px; font-weight: 700; }
   .sector-row .reason{ font-size: 12.5px; color: var(--ink-dim); line-height: 1.6; }
-
-  .narrative{ font-size: 13.5px; line-height: 1.75; color: var(--ink-dim); }
-  .narrative strong{ color: var(--ink); font-weight:600; }
 
   .briefing{ margin-top: 18px; padding-top: 16px; border-top: 1px solid var(--line-soft); }
   .briefing.briefing-top{ margin-top: 16px; padding-top: 0; border-top: none; }
@@ -486,7 +473,6 @@
         { name:"KOSDAQ", value:"798.81",   delta:"▼0.36%", cls:"down-kr" },
         { name:"USD/KRW", value:"1,416.10", delta:"▼7.70원", cls:"down-kr" },
       ],
-      fx: "원/달러 환율 <span class=\"mono\">1,416.10원</span> (전일比 <span class=\"mono down-kr\">▼7.70원</span>)",
       breadth: "등락 종목 비율 코스피 <span class=\"mono up-kr\">상승 554</span> : <span class=\"mono down-kr\">하락 322</span> · 코스닥 <span class=\"mono up-kr\">상승 808</span> : <span class=\"mono down-kr\">하락 829</span>",
       // cron-briefing.js가 매일 Upstash에 쌓는 실제 종가로 fetchLiveData()가 채웁니다.
       // 20거래일이 다 쌓이기 전까지는 그만큼만 짧게 표시됩니다.
@@ -570,206 +556,229 @@
     return res.json();
   }
 
-  async function fetchLiveData(){
-    let krBasDd = null;
-    let usMarketState = null;
-
-    // ---- [국내 지수 + 업종 등락률] KRX Open API (실제 연동됨) ----
+  // ---- [국내 지수 + 업종 등락률] KRX Open API (실제 연동됨) ----
+  async function fetchKrMarketBoth(){
     try {
       const [kospiJson, kosdaqJson] = await Promise.all([
         fetchKrMarket("KOSPI"),
         fetchKrMarket("KOSDAQ"),
       ]);
-      krBasDd = kospiJson.basDd;
-
-      // 코스피/코스닥 지수 카드 + 상단 티커 갱신
-      if (kospiJson.composite) {
-        const c = kospiJson.composite;
-        const d = fmtDelta(c.change, c.pct, { up: "up-kr", down: "down-kr" });
-        DATA.kr.indices[0] = { name: "KOSPI", value: fmtNum(c.close), delta: d.short, cls: d.cls };
-        const t = DATA.ticker.find(t => t.name === "KOSPI");
-        if (t) { t.value = fmtNum(c.close); t.delta = d.long; t.cls = d.cls; }
-      }
-      if (kosdaqJson.composite) {
-        const c = kosdaqJson.composite;
-        const d = fmtDelta(c.change, c.pct, { up: "up-kr", down: "down-kr" });
-        DATA.kr.indices[1] = { name: "KOSDAQ", value: fmtNum(c.close), delta: d.short, cls: d.cls };
-        const t = DATA.ticker.find(t => t.name === "KOSDAQ");
-        if (t) { t.value = fmtNum(c.close); t.delta = d.long; t.cls = d.cls; }
-      }
-
-      // 업종 TOP5 / BOTTOM5 (기존 reason은 이름이 같으면 재사용)
-      const prevReasons = {};
-      [...DATA.kr.sectorsTop, ...DATA.kr.sectorsBottom].forEach(s => { prevReasons[s.name] = s.reason; });
-      const mapRow = (r) => ({
-        name: r.name,
-        pct: r.pct,
-        reason: prevReasons[r.name] || "최신 KRX 데이터 반영 · 사유 요약은 다음 업데이트에서 채워집니다.",
-      });
-      if (Array.isArray(kospiJson.top5) && kospiJson.top5.length) DATA.kr.sectorsTop = kospiJson.top5.map(mapRow);
-      if (Array.isArray(kospiJson.bottom5) && kospiJson.bottom5.length) DATA.kr.sectorsBottom = kospiJson.bottom5.map(mapRow);
+      return { kospiJson, kosdaqJson };
     } catch (err) {
       console.warn("국내 지수/업종 실시간 연동 실패, 스냅샷 값을 유지합니다:", err);
+      return null;
+    }
+  }
+  function applyKrMarket(result){
+    if(!result) return { krBasDd: null };
+    const { kospiJson, kosdaqJson } = result;
+    const krBasDd = kospiJson.basDd;
+
+    // 코스피/코스닥 지수 카드 + 상단 티커 갱신
+    if (kospiJson.composite) {
+      const c = kospiJson.composite;
+      const d = fmtDelta(c.change, c.pct, { up: "up-kr", down: "down-kr" });
+      DATA.kr.indices[0] = { name: "KOSPI", value: fmtNum(c.close), delta: d.short, cls: d.cls };
+      const t = DATA.ticker.find(t => t.name === "KOSPI");
+      if (t) { t.value = fmtNum(c.close); t.delta = d.long; t.cls = d.cls; }
+    }
+    if (kosdaqJson.composite) {
+      const c = kosdaqJson.composite;
+      const d = fmtDelta(c.change, c.pct, { up: "up-kr", down: "down-kr" });
+      DATA.kr.indices[1] = { name: "KOSDAQ", value: fmtNum(c.close), delta: d.short, cls: d.cls };
+      const t = DATA.ticker.find(t => t.name === "KOSDAQ");
+      if (t) { t.value = fmtNum(c.close); t.delta = d.long; t.cls = d.cls; }
     }
 
-    // ---- [국내 등락 종목 비율] KRX Open API 전종목 시세 (실제 연동됨) ----
+    // 업종 TOP5 / BOTTOM5 (기존 reason은 이름이 같으면 재사용)
+    const prevReasons = {};
+    [...DATA.kr.sectorsTop, ...DATA.kr.sectorsBottom].forEach(s => { prevReasons[s.name] = s.reason; });
+    const mapRow = (r) => ({
+      name: r.name,
+      pct: r.pct,
+      reason: prevReasons[r.name] || "최신 KRX 데이터 반영 · 사유 요약은 다음 업데이트에서 채워집니다.",
+    });
+    if (Array.isArray(kospiJson.top5) && kospiJson.top5.length) DATA.kr.sectorsTop = kospiJson.top5.map(mapRow);
+    if (Array.isArray(kospiJson.bottom5) && kospiJson.bottom5.length) DATA.kr.sectorsBottom = kospiJson.bottom5.map(mapRow);
+
+    return { krBasDd };
+  }
+
+  // ---- [국내 등락 종목 비율] KRX Open API 전종목 시세 (실제 연동됨) ----
+  async function fetchBreadthRaw(){
     try {
       const res = await fetch(KR_BREADTH_API, { cache: "no-store" });
-      if (res.ok) {
-        const j = await res.json();
-        if (j.kospi && j.kosdaq) {
-          DATA.kr.breadth =
-            `등락 종목 비율 코스피 <span class="mono up-kr">상승 ${j.kospi.up}</span> : ` +
-            `<span class="mono down-kr">하락 ${j.kospi.down}</span> · ` +
-            `코스닥 <span class="mono up-kr">상승 ${j.kosdaq.up}</span> : ` +
-            `<span class="mono down-kr">하락 ${j.kosdaq.down}</span>`;
-        }
-      } else {
-        console.warn("kr-breadth API 응답 실패:", res.status);
-      }
+      if (!res.ok) { console.warn("kr-breadth API 응답 실패:", res.status); return null; }
+      return await res.json();
     } catch (err) {
       console.warn("국내 등락 종목 비율 실시간 연동 실패, 스냅샷 값을 유지합니다:", err);
+      return null;
     }
+  }
+  function applyBreadth(j){
+    if(!j || !j.kospi || !j.kosdaq) return;
+    DATA.kr.breadth =
+      `등락 종목 비율 코스피 <span class="mono up-kr">상승 ${j.kospi.up}</span> : ` +
+      `<span class="mono down-kr">하락 ${j.kospi.down}</span> · ` +
+      `코스닥 <span class="mono up-kr">상승 ${j.kosdaq.up}</span> : ` +
+      `<span class="mono down-kr">하락 ${j.kosdaq.down}</span>`;
+  }
 
-    // ---- [해외 지수] Yahoo Finance (실제 연동됨, 무료·키 불필요) ----
+  // ---- [해외 지수] Yahoo Finance (실제 연동됨, 무료·키 불필요) ----
+  async function fetchUsIndicesRaw(){
     try {
       const res = await fetch(US_INDICES_API, { cache: "no-store" });
-      if (res.ok) {
-        const json = await res.json();
-        const rows = [
-          { key: "sp500", name: "S&P 500" },
-          { key: "nasdaq", name: "NASDAQ" },
-          { key: "dow", name: "DOW" },
-        ];
-        rows.forEach(({ key, name }) => {
-          const r = json[key];
-          if (!r || !Number.isFinite(r.close) || !Number.isFinite(r.pct)) return;
-          const d = fmtDelta(r.change ?? 0, r.pct, { up: "up-us", down: "down-us" });
-          const idxEntry = DATA.us.indices.find(i => i.name === name);
-          if (idxEntry) { idxEntry.value = fmtNum(r.close); idxEntry.delta = d.short; idxEntry.cls = d.cls; }
-          const tEntry = DATA.ticker.find(t => t.name === name);
-          if (tEntry) { tEntry.value = fmtNum(r.close); tEntry.delta = d.long; tEntry.cls = d.cls; }
-        });
-
-        const badge = document.getElementById("usMarketBadge");
-        const isRegular = json.marketState === "REGULAR";
-        if (isRegular) {
-          usMarketState = "장중";
-        } else if (json.asOfDate) {
-          const [, am, ad] = json.asOfDate.split("-");
-          usMarketState = `${Number(am)}월 ${Number(ad)}일 마감`;
-        } else {
-          usMarketState = "장마감";
-        }
-        if (badge) {
-          badge.textContent = usMarketState;
-          badge.className = "badge " + (isRegular ? "live" : "snapshot");
-        }
-      } else {
-        console.warn("us-indices API 응답 실패:", res.status);
-      }
+      if (!res.ok) { console.warn("us-indices API 응답 실패:", res.status); return null; }
+      return await res.json();
     } catch (err) {
       console.warn("해외 지수 실시간 연동 실패, 스냅샷 값을 유지합니다:", err);
+      return null;
     }
+  }
+  function applyUsIndices(json){
+    if(!json) return { usMarketState: null };
+    const rows = [
+      { key: "sp500", name: "S&P 500" },
+      { key: "nasdaq", name: "NASDAQ" },
+      { key: "dow", name: "DOW" },
+    ];
+    rows.forEach(({ key, name }) => {
+      const r = json[key];
+      if (!r || !Number.isFinite(r.close) || !Number.isFinite(r.pct)) return;
+      const d = fmtDelta(r.change ?? 0, r.pct, { up: "up-us", down: "down-us" });
+      const idxEntry = DATA.us.indices.find(i => i.name === name);
+      if (idxEntry) { idxEntry.value = fmtNum(r.close); idxEntry.delta = d.short; idxEntry.cls = d.cls; }
+      const tEntry = DATA.ticker.find(t => t.name === name);
+      if (tEntry) { tEntry.value = fmtNum(r.close); tEntry.delta = d.long; tEntry.cls = d.cls; }
+    });
 
-    // ---- [국내 지수 값] Yahoo Finance (^KS11/^KQ11) — 장중엔 실시간, 마감 후엔 종가 ----
-    // (업종 TOP5/BOTTOM5는 위에서 이미 KRX API로 받았고, 이건 지수 숫자만 덮어씁니다.)
-    let krMarketState = null;
-    let krIndexAsOfDate = null; // Yahoo 기준 "며칠자 마감인지" — 배지/기준일 표시에 이걸 씁니다 (KRX 발행 지연과 무관)
+    const badge = document.getElementById("usMarketBadge");
+    const isRegular = json.marketState === "REGULAR";
+    let usMarketState;
+    if (isRegular) {
+      usMarketState = "장중";
+    } else if (json.asOfDate) {
+      const [, am, ad] = json.asOfDate.split("-");
+      usMarketState = `${Number(am)}월 ${Number(ad)}일 마감`;
+    } else {
+      usMarketState = "장마감";
+    }
+    if (badge) {
+      badge.textContent = usMarketState;
+      badge.className = "badge " + (isRegular ? "live" : "snapshot");
+    }
+    return { usMarketState };
+  }
+
+  // ---- [국내 지수 값] Yahoo Finance (^KS11/^KQ11/KRW=X) — 장중엔 실시간, 마감 후엔 종가 ----
+  // (업종 TOP5/BOTTOM5는 KRX API로 따로 받고, 이건 지수·환율 숫자만 담당. Yahoo 값이
+  //  KRX보다 항상 늦게 적용되도록 applyKrMarket() 다음에 apply해서 KRX 위에 덮어씁니다.)
+  async function fetchKrIndicesRaw(){
     try {
       const res = await fetch(KR_INDICES_API, { cache: "no-store" });
-      if (res.ok) {
-        const json = await res.json();
-        krMarketState = json.marketState;
-        krIndexAsOfDate = json.asOfDate;
-        const rows = [
-          { key: "kospi", name: "KOSPI", idx: 0 },
-          { key: "kosdaq", name: "KOSDAQ", idx: 1 },
-        ];
-        rows.forEach(({ key, name, idx }) => {
-          const r = json[key];
-          if (!r || !Number.isFinite(r.close) || !Number.isFinite(r.pct)) return;
-          const d = fmtDelta(r.change ?? 0, r.pct, { up: "up-kr", down: "down-kr" });
-          DATA.kr.indices[idx] = { name, value: fmtNum(r.close), delta: d.short, cls: d.cls };
-          const t = DATA.ticker.find(t => t.name === name);
-          if (t) { t.value = fmtNum(r.close); t.delta = d.long; t.cls = d.cls; }
-        });
-
-        // 원/달러는 등락률(%)보다 원 단위 변동을 보는 게 관행이라 별도로 처리합니다.
-        const fx = json.usdkrw;
-        if (fx && Number.isFinite(fx.close) && Number.isFinite(fx.change)) {
-          const isPos = fx.change >= 0;
-          const cls = isPos ? "up-kr" : "down-kr";
-          const delta = `${isPos ? "▲" : "▼"}${fmtNum(Math.abs(fx.change))}원`;
-          DATA.kr.indices[2] = { name: "USD/KRW", value: fmtNum(fx.close), delta, cls };
-          const t = DATA.ticker.find(t => t.name === "USD/KRW");
-          if (t) { t.value = fmtNum(fx.close); t.delta = delta; t.cls = cls; }
-        }
-      } else {
-        console.warn("kr-indices API 응답 실패:", res.status);
-      }
+      if (!res.ok) { console.warn("kr-indices API 응답 실패:", res.status); return null; }
+      return await res.json();
     } catch (err) {
       console.warn("국내 지수 실시간 연동 실패, KRX 마감값을 유지합니다:", err);
+      return null;
+    }
+  }
+  function applyKrIndices(json){
+    if(!json) return { krMarketState: null, krIndexAsOfDate: null };
+    const krMarketState = json.marketState;
+    const krIndexAsOfDate = json.asOfDate; // Yahoo 기준 "며칠자 마감인지" — 배지/기준일 표시에 이걸 씁니다 (KRX 발행 지연과 무관)
+    const rows = [
+      { key: "kospi", name: "KOSPI", idx: 0 },
+      { key: "kosdaq", name: "KOSDAQ", idx: 1 },
+    ];
+    rows.forEach(({ key, name, idx }) => {
+      const r = json[key];
+      if (!r || !Number.isFinite(r.close) || !Number.isFinite(r.pct)) return;
+      const d = fmtDelta(r.change ?? 0, r.pct, { up: "up-kr", down: "down-kr" });
+      DATA.kr.indices[idx] = { name, value: fmtNum(r.close), delta: d.short, cls: d.cls };
+      const t = DATA.ticker.find(t => t.name === name);
+      if (t) { t.value = fmtNum(r.close); t.delta = d.long; t.cls = d.cls; }
+    });
+
+    // 원/달러는 등락률(%)보다 원 단위 변동을 보는 게 관행이라 별도로 처리합니다.
+    const fx = json.usdkrw;
+    if (fx && Number.isFinite(fx.close) && Number.isFinite(fx.change)) {
+      const isPos = fx.change >= 0;
+      const cls = isPos ? "up-kr" : "down-kr";
+      const delta = `${isPos ? "▲" : "▼"}${fmtNum(Math.abs(fx.change))}원`;
+      DATA.kr.indices[2] = { name: "USD/KRW", value: fmtNum(fx.close), delta, cls };
+      const t = DATA.ticker.find(t => t.name === "USD/KRW");
+      if (t) { t.value = fmtNum(fx.close); t.delta = delta; t.cls = cls; }
     }
 
-    // ---- 상단 "데이터 기준" 표시를 실제 조회된 날짜/시각으로 갱신 ----
-    if (krBasDd || krIndexAsOfDate) {
-      const nowKST = new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false });
-      const krBadge = document.getElementById("krMarketBadge");
+    return { krMarketState, krIndexAsOfDate };
+  }
 
-      let krLabel;
-      if (krMarketState === "REGULAR") {
-        krLabel = "장중";
-        if (krBadge) { krBadge.textContent = "장중"; krBadge.className = "badge live"; }
-      } else if (krIndexAsOfDate) {
-        const [, m, d] = krIndexAsOfDate.split("-");
-        krLabel = `${Number(m)}월 ${Number(d)}일 마감`;
-        if (krBadge) { krBadge.textContent = krLabel; krBadge.className = "badge snapshot"; }
-      } else if (krBasDd) {
-        // Yahoo 조회가 실패했을 때만 KRX 날짜로 대체 표시
-        const m = krBasDd.slice(4, 6), d = krBasDd.slice(6, 8);
-        krLabel = `${Number(m)}월 ${Number(d)}일 마감`;
-        if (krBadge) { krBadge.textContent = krLabel; krBadge.className = "badge snapshot"; }
-      }
+  // ---- 상단 "데이터 기준" 표시를 실제 조회된 날짜/시각으로 갱신 ----
+  function updateMarketBadges(krBasDd, krMarketState, krIndexAsOfDate, usMarketState){
+    if (!(krBasDd || krIndexAsOfDate)) return;
+    const nowKST = new Date().toLocaleString("ko-KR", { timeZone: "Asia/Seoul", hour: "2-digit", minute: "2-digit", hour12: false });
+    const krBadge = document.getElementById("krMarketBadge");
 
-      DATA.updatedAt = `국내 ${krLabel} 기준 · 해외 ${usMarketState || "장마감"} 기준 (${nowKST} KST 갱신)`;
+    let krLabel;
+    if (krMarketState === "REGULAR") {
+      krLabel = "장중";
+      if (krBadge) { krBadge.textContent = "장중"; krBadge.className = "badge live"; }
+    } else if (krIndexAsOfDate) {
+      const [, m, d] = krIndexAsOfDate.split("-");
+      krLabel = `${Number(m)}월 ${Number(d)}일 마감`;
+      if (krBadge) { krBadge.textContent = krLabel; krBadge.className = "badge snapshot"; }
+    } else if (krBasDd) {
+      // Yahoo 조회가 실패했을 때만 KRX 날짜로 대체 표시
+      const m = krBasDd.slice(4, 6), d = krBasDd.slice(6, 8);
+      krLabel = `${Number(m)}월 ${Number(d)}일 마감`;
+      if (krBadge) { krBadge.textContent = krLabel; krBadge.className = "badge snapshot"; }
     }
 
-    // ---- [시황 코멘트] 매일 아침 8시 Cron이 미리 만들어둔 요약을 읽어옵니다 ----
-    // (이 호출 자체는 Claude를 부르지 않고 Upstash에서 저장된 값만 읽으므로 비용이 들지 않습니다.
-    //  실제 생성은 하루 한 번, api/cron-briefing.js에서만 일어납니다.)
+    DATA.updatedAt = `국내 ${krLabel} 기준 · 해외 ${usMarketState || "장마감"} 기준 (${nowKST} KST 갱신)`;
+  }
+
+  // ---- [시황 코멘트] 매일 아침 8시 Cron이 미리 만들어둔 요약을 읽어옵니다 ----
+  // (이 호출 자체는 Claude를 부르지 않고 Upstash에서 저장된 값만 읽으므로 비용이 들지 않습니다.
+  //  실제 생성은 하루 한 번, api/cron-briefing.js에서만 일어납니다.)
+  async function fetchBriefingRaw(){
     try {
       const res = await fetch(BRIEFING_API, { cache: "no-store" });
-      if (res.ok) {
-        const j = await res.json();
-        if (j.kr?.briefing) DATA.kr.briefing = j.kr.briefing;
-        if (j.us?.briefing) DATA.us.briefing = j.us.briefing;
-        if (j.generatedAt) DATA.lastCronRun = j.generatedAt;
-        if (Array.isArray(j.us?.sectorsTop) && j.us.sectorsTop.length) {
-          DATA.us.sectorsTop = j.us.sectorsTop;
-          DATA.us.sectorsBottom = j.us.sectorsBottom;
-        }
-
-        // Claude가 오늘 아침 생성해둔 업종별 이유를, 이름이 같은 업종에 매칭해서 덮어씁니다.
-        if (Array.isArray(j.kr?.sectorReasons) && j.kr.sectorReasons.length) {
-          const reasonMap = {};
-          j.kr.sectorReasons.forEach(r => { reasonMap[r.name] = r.reason; });
-          [...DATA.kr.sectorsTop, ...DATA.kr.sectorsBottom].forEach(s => {
-            if (reasonMap[s.name]) s.reason = reasonMap[s.name];
-          });
-        }
-      } else {
-        console.warn("briefing API 응답 실패 (아직 cron이 한 번도 안 돌았을 수 있음):", res.status);
-      }
+      if (!res.ok) { console.warn("briefing API 응답 실패 (아직 cron이 한 번도 안 돌았을 수 있음):", res.status); return null; }
+      return await res.json();
     } catch (err) {
       console.warn("시황 코멘트 자동 갱신 실패, 스냅샷 값을 유지합니다:", err);
+      return null;
+    }
+  }
+  function applyBriefing(j){
+    if(!j) return;
+    if (j.kr?.briefing) DATA.kr.briefing = j.kr.briefing;
+    if (j.us?.briefing) DATA.us.briefing = j.us.briefing;
+    if (j.generatedAt) DATA.lastCronRun = j.generatedAt;
+    if (Array.isArray(j.us?.sectorsTop) && j.us.sectorsTop.length) {
+      DATA.us.sectorsTop = j.us.sectorsTop;
+      DATA.us.sectorsBottom = j.us.sectorsBottom;
     }
 
-    // ---- [국내 업종 이유 온디맨드 보완] ----
-    // cron이 아침에 만들어둔 이유가 지금 실시간 업종 목록과 이름이 안 맞을 수 있어서
-    // (KRX가 데이터를 늦게 올리면 당일 업종 순위가 바뀔 수 있음), 지금 실제 화면에 뜨는
-    // 업종 전체를 서버에 다시 확인시킵니다. 서버가 당일 캐시에 이미 있는 업종은 그대로
-    // 반환(무료)하고, 정말 새로 나타난 업종만 그때 Claude로 채워서 캐시에 저장합니다.
+    // Claude가 오늘 아침 생성해둔 업종별 이유를, 이름이 같은 업종에 매칭해서 덮어씁니다.
+    if (Array.isArray(j.kr?.sectorReasons) && j.kr.sectorReasons.length) {
+      const reasonMap = {};
+      j.kr.sectorReasons.forEach(r => { reasonMap[r.name] = r.reason; });
+      [...DATA.kr.sectorsTop, ...DATA.kr.sectorsBottom].forEach(s => {
+        if (reasonMap[s.name]) s.reason = reasonMap[s.name];
+      });
+    }
+  }
+
+  // ---- [국내 업종 이유 온디맨드 보완] ----
+  // cron이 아침에 만들어둔 이유가 지금 실시간 업종 목록과 이름이 안 맞을 수 있어서
+  // (KRX가 데이터를 늦게 올리면 당일 업종 순위가 바뀔 수 있음), 지금 실제 화면에 뜨는
+  // 업종 전체를 서버에 다시 확인시킵니다. 서버가 당일 캐시에 이미 있는 업종은 그대로
+  // 반환(무료)하고, 정말 새로 나타난 업종만 그때 Claude로 채워서 캐시에 저장합니다.
+  // (DATA.kr.sectorsTop/Bottom이 최종 확정된 뒤에만 의미가 있어서, 다른 것들과 병렬로
+  //  안 돌리고 항상 마지막에 따로 호출합니다.)
+  async function fetchAndApplyKrSectorReasons(){
     try {
       const currentSectors = [...DATA.kr.sectorsTop, ...DATA.kr.sectorsBottom].map(s => ({ name: s.name, pct: s.pct }));
       const res = await fetch(`${KR_SECTOR_REASONS_API}?sectors=${encodeURIComponent(JSON.stringify(currentSectors))}`, { cache: "no-store" });
@@ -784,43 +793,77 @@
     } catch (err) {
       console.warn("업종 이유 온디맨드 보완 실패, 기존 값을 유지합니다:", err);
     }
+  }
 
-    // ---- [지수 추이 히스토리] cron이 매일 쌓아둔 실제 종가 기록을 읽어옵니다 ----
-    // 20거래일이 다 쌓이기 전까지는 그만큼만 짧게 표시됩니다 (목업으로 채우지 않음).
+  // ---- [지수 추이 히스토리] cron이 매일 쌓아둔 실제 종가 기록을 읽어옵니다 ----
+  // 20거래일이 다 쌓이기 전까지는 그만큼만 짧게 표시됩니다 (목업으로 채우지 않음).
+  async function fetchHistoryRaw(){
     try {
       const res = await fetch(HISTORY_API, { cache: "no-store" });
-      if (res.ok) {
-        const hist = await res.json();
-        Object.keys(DATA.kr.history).forEach((name) => {
-          if (Array.isArray(hist[name])) DATA.kr.history[name] = hist[name];
-        });
-        Object.keys(DATA.us.history).forEach((name) => {
-          if (Array.isArray(hist[name])) DATA.us.history[name] = hist[name];
-        });
-      } else {
-        console.warn("history API 응답 실패:", res.status);
-      }
+      if (!res.ok) { console.warn("history API 응답 실패:", res.status); return null; }
+      return await res.json();
     } catch (err) {
       console.warn("지수 추이 히스토리 실시간 연동 실패:", err);
+      return null;
     }
+  }
+  function applyHistory(hist){
+    if(!hist) return;
+    Object.keys(DATA.kr.history).forEach((name) => {
+      if (Array.isArray(hist[name])) DATA.kr.history[name] = hist[name];
+    });
+    Object.keys(DATA.us.history).forEach((name) => {
+      if (Array.isArray(hist[name])) DATA.us.history[name] = hist[name];
+    });
+  }
 
-    // ---- [매크로 캘린더] cron이 FRED에서 매일 가져와 쌓아둔 다음 7일 발표 일정을 읽어옵니다 ----
+  // ---- [매크로 캘린더] cron이 FRED에서 매일 가져와 쌓아둔 다음 7일 발표 일정을 읽어옵니다 ----
+  async function fetchMacroRaw(){
     try {
       const res = await fetch(MACRO_CALENDAR_API, { cache: "no-store" });
-      if (res.ok) {
-        const j = await res.json();
-        if (Array.isArray(j.events)) DATA.macroCalendar = j.events;
-      } else {
-        console.warn("macro-calendar API 응답 실패:", res.status);
-      }
+      if (!res.ok) { console.warn("macro-calendar API 응답 실패:", res.status); return null; }
+      return await res.json();
     } catch (err) {
       console.warn("매크로 캘린더 실시간 연동 실패:", err);
+      return null;
     }
+  }
+  function applyMacro(j){
+    if(!j) return;
+    if (Array.isArray(j.events)) DATA.macroCalendar = j.events;
+  }
 
-    // ---- [해외 업종 등락률] Finviz — 공식 무료 API는 없음(Elite 구독형, finviz.com/elite). ----
-    // 브라우저에서 finviz.com/groups?g=sector&v=140 를 매일 열어서 옮기는 게 현재 방식.
-    // 자동화하려면 완전 무료 대안으로 섹터 ETF(XLB·XLK·XLRE·XLI·XLV·XLY·XLU·XLF·XLP·XLC·XLE) 일별 종가를
-    // stooq.com CSV로 받아 전일 대비 등락률을 직접 계산하는 방법이 있습니다 (us-indices.js와 같은 패턴).
+  // ---- [해외 업종 등락률] Finviz — 공식 무료 API는 없음(Elite 구독형, finviz.com/elite). ----
+  // 브라우저에서 finviz.com/groups?g=sector&v=140 를 매일 열어서 옮기는 게 현재 방식.
+  // 자동화하려면 완전 무료 대안으로 섹터 ETF(XLB·XLK·XLRE·XLI·XLV·XLY·XLU·XLF·XLP·XLC·XLE) 일별 종가를
+  // stooq.com CSV로 받아 전일 대비 등락률을 직접 계산하는 방법이 있습니다 (us-indices.js와 같은 패턴).
+
+  // 서로 의존관계 없는 요청들은 동시에 시작해서 로딩 시간을 줄이고, DATA에 실제로 반영하는
+  // 순서만 기존과 동일하게 유지합니다(예: Yahoo 지수 값이 항상 KRX 값 위에 마지막으로
+  // 덮어써야 하는 것처럼). 국내 업종 이유 온디맨드 보완만 최종 업종 목록이 필요해서 예외적으로
+  // 나머지가 다 끝난 뒤 마지막에 따로 호출합니다.
+  async function fetchLiveData(){
+    const [krMarketResult, breadthJson, usIndicesJson, krIndicesJson, briefingJson, historyJson, macroJson] =
+      await Promise.all([
+        fetchKrMarketBoth(),
+        fetchBreadthRaw(),
+        fetchUsIndicesRaw(),
+        fetchKrIndicesRaw(),
+        fetchBriefingRaw(),
+        fetchHistoryRaw(),
+        fetchMacroRaw(),
+      ]);
+
+    const { krBasDd } = applyKrMarket(krMarketResult);
+    applyBreadth(breadthJson);
+    const { usMarketState } = applyUsIndices(usIndicesJson);
+    const { krMarketState, krIndexAsOfDate } = applyKrIndices(krIndicesJson);
+    updateMarketBadges(krBasDd, krMarketState, krIndexAsOfDate, usMarketState);
+    applyBriefing(briefingJson);
+    applyHistory(historyJson);
+    applyMacro(macroJson);
+
+    await fetchAndApplyKrSectorReasons();
   }
 
 
@@ -890,21 +933,6 @@
         <div class="name">${i.name}</div>
         <div class="value mono">${i.value}</div>
         <div class="delta mono ${i.cls}">${i.delta}</div>
-      </div>
-    `).join("");
-  }
-
-  function renderTags(elId, items, cls){
-    document.getElementById(elId).innerHTML = items.map(t => `<span class="tag ${cls}">${t}</span>`).join("");
-  }
-
-  function renderSingleBars(elId, data){
-    const max = Math.max(...data.map(d => Math.abs(d.pct)));
-    document.getElementById(elId).innerHTML = data.map(d => `
-      <div class="barrow">
-        <div class="label">${d.name}</div>
-        <div class="barbase"><div class="bar-single" style="width:${(Math.abs(d.pct)/max*100).toFixed(1)}%"></div></div>
-        <div class="val mono up-kr">+${d.pct.toFixed(2)}%</div>
       </div>
     `).join("");
   }
