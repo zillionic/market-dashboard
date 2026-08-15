@@ -178,6 +178,8 @@
   }
   .macro-cal-item .date{ font-family:'JetBrains Mono', monospace; color: var(--gold); font-weight:700; white-space:nowrap; }
   .macro-cal-item .name{ color: var(--ink); }
+  .macro-cal-item .actual{ font-family:'JetBrains Mono', monospace; font-weight:700; color: var(--ink); white-space:nowrap; }
+  .macro-cal-item .previous{ font-family:'JetBrains Mono', monospace; color: var(--ink-faint); white-space:nowrap; }
   .macro-cal-empty{ color: var(--ink-faint); font-size: 12.5px; }
 
   /* ---------- grid ---------- */
@@ -863,6 +865,8 @@
       <div class="macro-cal-item">
         <span class="date mono">${formatShortKoreanDate(e.date)}</span>
         <span class="name">${e.name}</span>
+        ${e.actual ? `<span class="actual mono">${e.actual}</span>` : ""}
+        ${e.previous ? `<span class="previous mono">(직전 ${e.previous})</span>` : ""}
       </div>
     `).join("");
   }

@@ -127,19 +127,25 @@ const FRED_API_KEY = process.env.FRED_API_KEY;
 // 미국 월간 지표는 거의 다 "발표 전월" 데이터를 다루는 관행이라 -1이 기본값입니다.
 //   - 예외 1) 소비자신뢰지수는 그 달 설문을 그 달에 바로 발표하는 실시간 서베이라 0.
 //   - 예외 2) GDP는 분기 데이터라 "몇 월"로 표기하는 게 오히려 헷갈려서 null(표기 생략).
+//
+// seriesId/unitsParam: 발표 당일이면 FRED series/observations에서 발표치·직전치를 같이
+// 가져옵니다. unitsParam은 FRED가 서버에서 계산해주는 변환 방식이라 우리가 직접 전년비·
+// 전월비를 계산할 필요가 없습니다 (pc1=전년비%, pch=전월비%, chg=전월 대비 절대 변화량,
+// lin=원값 그대로). ISM처럼 FRED에 원본 시리즈가 없는 지표는 seriesId를 비워둡니다
+// (컨센서스/예상치는 FRED에 아예 없는 데이터라 나중에 다른 소스가 필요합니다).
 const MACRO_RELEASES = [
-  { keyword: "Employment Situation", ko: "미국 고용보고서", periodOffset: -1 },
-  { keyword: "Consumer Price Index", ko: "미국 소비자물가지수(CPI)", periodOffset: -1 },
-  { keyword: "Producer Price Index", ko: "미국 생산자물가지수(PPI)", periodOffset: -1 },
-  { keyword: "Personal Income and Outlays", ko: "미국 개인소득·지출(PCE 물가)", periodOffset: -1 },
-  { keyword: "Advance Monthly Sales for Retail", ko: "미국 소매판매", periodOffset: -1 },
-  { keyword: "Gross Domestic Product", ko: "미국 GDP(국내총생산)", periodOffset: null },
-  { keyword: "Industrial Production", ko: "미국 산업생산·설비가동률", periodOffset: -1 },
-  { keyword: "Housing Starts", ko: "미국 주택착공건수", periodOffset: -1 },
-  { keyword: "Existing Home Sales", ko: "미국 기존주택판매", periodOffset: -1 },
-  { keyword: "New Residential Sales", ko: "미국 신규주택판매", periodOffset: -1 },
-  { keyword: "Consumer Confidence", ko: "미국 소비자신뢰지수", periodOffset: 0 },
-  { keyword: "ISM", ko: "미국 ISM 제조업·서비스업 지수", periodOffset: -1 },
+  { keyword: "Employment Situation", ko: "미국 고용보고서", periodOffset: -1, seriesId: "PAYEMS", unitsParam: "chg", displayFormat: "jobsChg" },
+  { keyword: "Consumer Price Index", ko: "미국 소비자물가지수(CPI)", periodOffset: -1, seriesId: "CPIAUCSL", unitsParam: "pc1", displayFormat: "pct" },
+  { keyword: "Producer Price Index", ko: "미국 생산자물가지수(PPI)", periodOffset: -1, seriesId: "PPIACO", unitsParam: "pc1", displayFormat: "pct" },
+  { keyword: "Personal Income and Outlays", ko: "미국 개인소득·지출(PCE 물가)", periodOffset: -1, seriesId: "PCEPI", unitsParam: "pc1", displayFormat: "pct" },
+  { keyword: "Advance Monthly Sales for Retail", ko: "미국 소매판매", periodOffset: -1, seriesId: "RSAFS", unitsParam: "pc1", displayFormat: "pct" },
+  { keyword: "Gross Domestic Product", ko: "미국 GDP(국내총생산)", periodOffset: null, seriesId: "A191RL1Q225SBEA", unitsParam: "lin", displayFormat: "pct" },
+  { keyword: "Industrial Production", ko: "미국 산업생산·설비가동률", periodOffset: -1, seriesId: "INDPRO", unitsParam: "pch", displayFormat: "pct" },
+  { keyword: "Housing Starts", ko: "미국 주택착공건수", periodOffset: -1, seriesId: "HOUST", unitsParam: "pch", displayFormat: "pct" },
+  { keyword: "Existing Home Sales", ko: "미국 기존주택판매", periodOffset: -1, seriesId: "EXHOSLUSM495S", unitsParam: "pch", displayFormat: "pct" },
+  { keyword: "New Residential Sales", ko: "미국 신규주택판매", periodOffset: -1, seriesId: "HSN1F", unitsParam: "pch", displayFormat: "pct" },
+  { keyword: "Consumer Confidence", ko: "미국 소비자신뢰지수", periodOffset: 0, seriesId: "UMCSENT", unitsParam: "lin", displayFormat: "index" },
+  { keyword: "ISM", ko: "미국 ISM 제조업·서비스업 지수", periodOffset: -1, seriesId: null, unitsParam: null, displayFormat: null },
 ];
 // FRED의 "FOMC Press Release"·"H.15 Selected Interest Rates"는 실제 회의 일정이 아니라
 // 영업일마다(주말 포함으로 뜨는 경우도 있음) 갱신되는 시리즈라서 일부러 제외했습니다.
@@ -157,6 +163,32 @@ function periodLabel(releaseDate, offsetMonths) {
   const d = new Date(releaseDate + "T00:00:00Z");
   d.setUTCMonth(d.getUTCMonth() + offsetMonths);
   return `(${d.getUTCMonth() + 1}월)`;
+}
+
+// 최신 관측치(발표치)와 그 직전 관측치(직전치)를 가져옵니다. units는 FRED가 서버에서
+// 미리 계산해주는 변환이라, 우리는 최근 2개 값만 받아서 그대로 쓰면 됩니다.
+async function fetchFredActualPrevious(seriesId, unitsParam) {
+  const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${encodeURIComponent(seriesId)}` +
+    `&units=${unitsParam}&sort_order=desc&limit=2&file_type=json&api_key=${FRED_API_KEY}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`FRED series 조회 실패 (${seriesId}, ${res.status})`);
+  const json = await res.json();
+  const obs = (json.observations || []).filter((o) => o.value !== "."); // FRED는 결측치를 "."으로 표시
+  return {
+    actual: obs[0] ? Number(obs[0].value) : null,
+    previous: obs[1] ? Number(obs[1].value) : null,
+  };
+}
+
+function formatFredValue(value, displayFormat) {
+  if (value === null || !Number.isFinite(value)) return null;
+  if (displayFormat === "pct") return `${value >= 0 ? "+" : ""}${value.toFixed(2)}%`;
+  if (displayFormat === "jobsChg") {
+    const manMyeong = value / 10; // PAYEMS는 천 명 단위 → 만 명 단위로 변환
+    return `${manMyeong >= 0 ? "+" : ""}${manMyeong.toFixed(1)}만명`;
+  }
+  if (displayFormat === "index") return value.toFixed(1);
+  return String(value);
 }
 
 async function fetchMacroCalendar() {
@@ -179,7 +211,7 @@ async function fetchMacroCalendar() {
       const hit = MACRO_RELEASES.find((m) =>
         (r.release_name || "").toLowerCase().includes(m.keyword.toLowerCase())
       );
-      return hit ? { date: r.date, rawName: r.release_name, ko: hit.ko, periodOffset: hit.periodOffset } : null;
+      return hit ? { date: r.date, rawName: r.release_name, ...hit } : null;
     })
     .filter(Boolean);
 
@@ -199,9 +231,26 @@ async function fetchMacroCalendar() {
   //  한글명에 매핑되는 경우까지 "중복"으로 오판해 지워버리는 걸 막기 위함입니다.)
   const rawCounts = {};
   deduped.forEach((e) => { rawCounts[e.rawName] = (rawCounts[e.rawName] || 0) + 1; });
-  const events = deduped
-    .filter((e) => rawCounts[e.rawName] === 1)
-    .map((e) => ({ date: e.date, name: `${e.ko}${periodLabel(e.date, e.periodOffset)}` }));
+  const filtered = deduped.filter((e) => rawCounts[e.rawName] === 1);
+
+  // 오늘 날짜 이벤트만 "이미 발표됐을 수 있다"고 보고 FRED에서 발표치·직전치를 같이 가져옵니다
+  // (내일 이후 이벤트는 아직 안 나온 데이터라 시도해봤자 의미가 없습니다). 컨센서스(예상치)는
+  // FRED에 아예 없는 데이터라 여기 포함되지 않습니다 — 나중에 다른 소스로 보강할 부분입니다.
+  const events = await Promise.all(filtered.map(async (e) => {
+    const item = { date: e.date, name: `${e.ko}${periodLabel(e.date, e.periodOffset)}` };
+    if (e.date === realtimeStart && e.seriesId) {
+      try {
+        const { actual, previous } = await fetchFredActualPrevious(e.seriesId, e.unitsParam);
+        const actualStr = formatFredValue(actual, e.displayFormat);
+        const previousStr = formatFredValue(previous, e.displayFormat);
+        if (actualStr) item.actual = actualStr;
+        if (previousStr) item.previous = previousStr;
+      } catch (err) {
+        console.warn(`FRED 시리즈 조회 실패 (${e.seriesId}), 발표치 없이 진행:`, err);
+      }
+    }
+    return item;
+  }));
 
   events.sort((a, b) => a.date.localeCompare(b.date));
   return events;
