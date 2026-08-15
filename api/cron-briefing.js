@@ -174,6 +174,21 @@ function nyDateStr(offsetDays = 0) {
   return d.toLocaleDateString("en-CA", { timeZone: "America/New_York" }); // "YYYY-MM-DD"
 }
 
+// 매크로/실적 캘린더 둘 다 "지난 영업일부터" 보여주기 위한 기준일 계산입니다. 어제가
+// 토/일이면(월요일에 조회하는 경우 등) 계속 거슬러 올라가서 가장 최근 평일(금요일)을 찾습니다.
+// TODO: 공휴일까지 건너뛰려면 KR_HOLIDAYS처럼 날짜 목록을 추가해서 같이 걸러주세요.
+function previousBusinessDayStr() {
+  for (let offset = -1; offset >= -3; offset--) {
+    const d = new Date();
+    d.setDate(d.getDate() + offset);
+    const weekday = new Intl.DateTimeFormat("en-US", { timeZone: "America/New_York", weekday: "short" }).format(d);
+    if (weekday !== "Sat" && weekday !== "Sun") {
+      return d.toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+    }
+  }
+  return nyDateStr(-1); // 이론상 도달하지 않음(3일 연속 주말일 수 없음)
+}
+
 // releaseDate("YYYY-MM-DD") 기준으로 offsetMonths만큼 이전 달을 "(N월)" 형태로 반환합니다.
 function periodLabel(releaseDate, offsetMonths) {
   if (offsetMonths === null || offsetMonths === undefined) return "";
@@ -220,8 +235,11 @@ function formatFredValue(value, displayFormat) {
 async function fetchMacroCalendar() {
   if (!FRED_API_KEY) return [];
 
-  const realtimeStart = nyDateStr(0);
-  const realtimeEnd = nyDateStr(7);
+  // 지난 영업일(전일, 주말이면 그 전 금요일)부터 오늘+5일까지 — 아침에 전일 발표 확인 +
+  // 앞으로 한 주 확인을 둘 다 할 수 있게 합니다.
+  const realtimeStart = previousBusinessDayStr();
+  const todayStr = nyDateStr(0);
+  const realtimeEnd = nyDateStr(5);
   const url = `https://api.stlouisfed.org/fred/releases/dates?api_key=${FRED_API_KEY}&file_type=json` +
     `&realtime_start=${realtimeStart}&realtime_end=${realtimeEnd}` +
     `&include_release_dates_with_no_data=true&sort_order=asc&limit=1000`;
@@ -259,12 +277,14 @@ async function fetchMacroCalendar() {
   deduped.forEach((e) => { rawCounts[e.rawName] = (rawCounts[e.rawName] || 0) + 1; });
   const filtered = deduped.filter((e) => rawCounts[e.rawName] === 1);
 
-  // 오늘 날짜 이벤트만 "이미 발표됐을 수 있다"고 보고 FRED에서 발표치·직전치를 같이 가져옵니다
-  // (내일 이후 이벤트는 아직 안 나온 데이터라 시도해봤자 의미가 없습니다). 컨센서스(예상치)는
-  // FRED에 아예 없는 데이터라 여기 포함되지 않습니다 — 나중에 다른 소스로 보강할 부분입니다.
+  // 오늘 이전(전일 포함) 이벤트는 "이미 발표됐을 수 있다"고 보고 FRED에서 발표치·직전치를
+  // 같이 가져옵니다 (창이 지난 영업일부터 시작하니 오늘 하루만 볼 게 아니라 과거로 걸린 날짜
+  // 전부 시도합니다). 내일 이후 이벤트는 아직 안 나온 데이터라 시도해봤자 의미가 없습니다.
+  // 컨센서스(예상치)는 FRED에 아예 없는 데이터라 여기 포함되지 않습니다 — 나중에 다른 소스로
+  // 보강할 부분입니다.
   const events = await Promise.all(filtered.map(async (e) => {
     const item = { date: e.date, name: `${e.ko}${periodLabel(e.date, e.periodOffset)}` };
-    if (e.date === realtimeStart && e.seriesId) {
+    if (e.date <= todayStr && e.seriesId) {
       try {
         const { actual, previous, displayFormat, period } = await fetchFredActualPrevious(e.seriesId, e.units);
         const actualStr = formatFredValue(actual, displayFormat);
@@ -367,8 +387,9 @@ const MAX_NEW_MARKETCAP_LOOKUPS = 30; // 캐시에 없는 신규 종목에 대�
 async function fetchEarningsCalendar() {
   if (!FINNHUB_API_KEY) return [];
 
-  const fromStr = nyDateStr(0);
-  const toStr = nyDateStr(7);
+  // 매크로 캘린더와 같은 규칙: 지난 영업일(전일, 주말이면 그 전 금요일)부터 오늘+5일까지.
+  const fromStr = previousBusinessDayStr();
+  const toStr = nyDateStr(5);
 
   const [sp500Map, rawEntries, mcapCache] = await Promise.all([
     fetchSp500Constituents(),
