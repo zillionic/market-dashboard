@@ -128,24 +128,39 @@ const FRED_API_KEY = process.env.FRED_API_KEY;
 //   - 예외 1) 소비자신뢰지수는 그 달 설문을 그 달에 바로 발표하는 실시간 서베이라 0.
 //   - 예외 2) GDP는 분기 데이터라 "몇 월"로 표기하는 게 오히려 헷갈려서 null(표기 생략).
 //
-// seriesId/unitsParam: 발표 당일이면 FRED series/observations에서 발표치·직전치를 같이
-// 가져옵니다. unitsParam은 FRED가 서버에서 계산해주는 변환 방식이라 우리가 직접 전년비·
+// seriesId/units: 발표 당일이면 FRED series/observations에서 발표치·직전치를 같이
+// 가져옵니다. units는 FRED가 서버에서 계산해주는 변환 방식이라 우리가 직접 전년비·
 // 전월비를 계산할 필요가 없습니다 (pc1=전년비%, pch=전월비%, chg=전월 대비 절대 변화량,
 // lin=원값 그대로). ISM처럼 FRED에 원본 시리즈가 없는 지표는 seriesId를 비워둡니다
 // (컨센서스/예상치는 FRED에 아예 없는 데이터라 나중에 다른 소스가 필요합니다).
+//
+// units는 우선순위 배열입니다 — 시장은 보통 전월비(MoM)에 더 민감하게 반응하므로 MoM을
+// 먼저 시도하고, 그 값이 없으면(결측치 등) 그다음 후보인 전년비(YoY)로 넘어갑니다.
+// 실제로 쓰인 후보의 period("MoM"/"YoY"/"QoQ")를 대시보드에 함께 표시합니다.
 const MACRO_RELEASES = [
-  { keyword: "Employment Situation", ko: "미국 고용보고서", periodOffset: -1, seriesId: "PAYEMS", unitsParam: "chg", displayFormat: "jobsChg" },
-  { keyword: "Consumer Price Index", ko: "미국 소비자물가지수(CPI)", periodOffset: -1, seriesId: "CPIAUCSL", unitsParam: "pc1", displayFormat: "pct" },
-  { keyword: "Producer Price Index", ko: "미국 생산자물가지수(PPI)", periodOffset: -1, seriesId: "PPIACO", unitsParam: "pc1", displayFormat: "pct" },
-  { keyword: "Personal Income and Outlays", ko: "미국 개인소득·지출(PCE 물가)", periodOffset: -1, seriesId: "PCEPI", unitsParam: "pc1", displayFormat: "pct" },
-  { keyword: "Advance Monthly Sales for Retail", ko: "미국 소매판매", periodOffset: -1, seriesId: "RSAFS", unitsParam: "pc1", displayFormat: "pct" },
-  { keyword: "Gross Domestic Product", ko: "미국 GDP(국내총생산)", periodOffset: null, seriesId: "A191RL1Q225SBEA", unitsParam: "lin", displayFormat: "pct" },
-  { keyword: "Industrial Production", ko: "미국 산업생산·설비가동률", periodOffset: -1, seriesId: "INDPRO", unitsParam: "pch", displayFormat: "pct" },
-  { keyword: "Housing Starts", ko: "미국 주택착공건수", periodOffset: -1, seriesId: "HOUST", unitsParam: "pch", displayFormat: "pct" },
-  { keyword: "Existing Home Sales", ko: "미국 기존주택판매", periodOffset: -1, seriesId: "EXHOSLUSM495S", unitsParam: "pch", displayFormat: "pct" },
-  { keyword: "New Residential Sales", ko: "미국 신규주택판매", periodOffset: -1, seriesId: "HSN1F", unitsParam: "pch", displayFormat: "pct" },
-  { keyword: "Consumer Confidence", ko: "미국 소비자신뢰지수", periodOffset: 0, seriesId: "UMCSENT", unitsParam: "lin", displayFormat: "index" },
-  { keyword: "ISM", ko: "미국 ISM 제조업·서비스업 지수", periodOffset: -1, seriesId: null, unitsParam: null, displayFormat: null },
+  { keyword: "Employment Situation", ko: "미국 고용보고서", periodOffset: -1, seriesId: "PAYEMS",
+    units: [{ param: "chg", displayFormat: "jobsChg", period: "MoM" }] },
+  { keyword: "Consumer Price Index", ko: "미국 소비자물가지수(CPI)", periodOffset: -1, seriesId: "CPIAUCSL",
+    units: [{ param: "pch", displayFormat: "pct", period: "MoM" }, { param: "pc1", displayFormat: "pct", period: "YoY" }] },
+  { keyword: "Producer Price Index", ko: "미국 생산자물가지수(PPI)", periodOffset: -1, seriesId: "PPIACO",
+    units: [{ param: "pch", displayFormat: "pct", period: "MoM" }, { param: "pc1", displayFormat: "pct", period: "YoY" }] },
+  { keyword: "Personal Income and Outlays", ko: "미국 개인소득·지출(PCE 물가)", periodOffset: -1, seriesId: "PCEPI",
+    units: [{ param: "pch", displayFormat: "pct", period: "MoM" }, { param: "pc1", displayFormat: "pct", period: "YoY" }] },
+  { keyword: "Advance Monthly Sales for Retail", ko: "미국 소매판매", periodOffset: -1, seriesId: "RSAFS",
+    units: [{ param: "pch", displayFormat: "pct", period: "MoM" }, { param: "pc1", displayFormat: "pct", period: "YoY" }] },
+  { keyword: "Gross Domestic Product", ko: "미국 GDP(국내총생산)", periodOffset: null, seriesId: "A191RL1Q225SBEA",
+    units: [{ param: "lin", displayFormat: "pct", period: "QoQ" }] }, // 분기 데이터라 MoM/YoY 대신 전기비(연율)
+  { keyword: "Industrial Production", ko: "미국 산업생산·설비가동률", periodOffset: -1, seriesId: "INDPRO",
+    units: [{ param: "pch", displayFormat: "pct", period: "MoM" }, { param: "pc1", displayFormat: "pct", period: "YoY" }] },
+  { keyword: "Housing Starts", ko: "미국 주택착공건수", periodOffset: -1, seriesId: "HOUST",
+    units: [{ param: "pch", displayFormat: "pct", period: "MoM" }, { param: "pc1", displayFormat: "pct", period: "YoY" }] },
+  { keyword: "Existing Home Sales", ko: "미국 기존주택판매", periodOffset: -1, seriesId: "EXHOSLUSM495S",
+    units: [{ param: "pch", displayFormat: "pct", period: "MoM" }, { param: "pc1", displayFormat: "pct", period: "YoY" }] },
+  { keyword: "New Residential Sales", ko: "미국 신규주택판매", periodOffset: -1, seriesId: "HSN1F",
+    units: [{ param: "pch", displayFormat: "pct", period: "MoM" }, { param: "pc1", displayFormat: "pct", period: "YoY" }] },
+  { keyword: "Consumer Confidence", ko: "미국 소비자신뢰지수", periodOffset: 0, seriesId: "UMCSENT",
+    units: [{ param: "lin", displayFormat: "index", period: null }] }, // 지수 레벨이라 MoM/YoY 표시 대상 아님
+  { keyword: "ISM", ko: "미국 ISM 제조업·서비스업 지수", periodOffset: -1, seriesId: null, units: [] },
 ];
 // FRED의 "FOMC Press Release"·"H.15 Selected Interest Rates"는 실제 회의 일정이 아니라
 // 영업일마다(주말 포함으로 뜨는 경우도 있음) 갱신되는 시리즈라서 일부러 제외했습니다.
@@ -167,7 +182,7 @@ function periodLabel(releaseDate, offsetMonths) {
 
 // 최신 관측치(발표치)와 그 직전 관측치(직전치)를 가져옵니다. units는 FRED가 서버에서
 // 미리 계산해주는 변환이라, 우리는 최근 2개 값만 받아서 그대로 쓰면 됩니다.
-async function fetchFredActualPrevious(seriesId, unitsParam) {
+async function fetchFredObservations(seriesId, unitsParam) {
   const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${encodeURIComponent(seriesId)}` +
     `&units=${unitsParam}&sort_order=desc&limit=2&file_type=json&api_key=${FRED_API_KEY}`;
   const res = await fetch(url);
@@ -178,6 +193,15 @@ async function fetchFredActualPrevious(seriesId, unitsParam) {
     actual: obs[0] ? Number(obs[0].value) : null,
     previous: obs[1] ? Number(obs[1].value) : null,
   };
+}
+
+// units 후보를 우선순위(MoM 먼저) 순서로 시도하다가, 발표치가 실제로 있는 첫 후보를 채택합니다.
+async function fetchFredActualPrevious(seriesId, unitCandidates) {
+  for (const candidate of unitCandidates) {
+    const { actual, previous } = await fetchFredObservations(seriesId, candidate.param);
+    if (actual !== null) return { actual, previous, displayFormat: candidate.displayFormat, period: candidate.period };
+  }
+  return { actual: null, previous: null, displayFormat: null, period: null };
 }
 
 function formatFredValue(value, displayFormat) {
@@ -240,11 +264,12 @@ async function fetchMacroCalendar() {
     const item = { date: e.date, name: `${e.ko}${periodLabel(e.date, e.periodOffset)}` };
     if (e.date === realtimeStart && e.seriesId) {
       try {
-        const { actual, previous } = await fetchFredActualPrevious(e.seriesId, e.unitsParam);
-        const actualStr = formatFredValue(actual, e.displayFormat);
-        const previousStr = formatFredValue(previous, e.displayFormat);
+        const { actual, previous, displayFormat, period } = await fetchFredActualPrevious(e.seriesId, e.units);
+        const actualStr = formatFredValue(actual, displayFormat);
+        const previousStr = formatFredValue(previous, displayFormat);
         if (actualStr) item.actual = actualStr;
         if (previousStr) item.previous = previousStr;
+        if (actualStr && period) item.period = period;
       } catch (err) {
         console.warn(`FRED 시리즈 조회 실패 (${e.seriesId}), 발표치 없이 진행:`, err);
       }
