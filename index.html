@@ -496,8 +496,8 @@
     ],
     kr: {
       indices: [
-        { name:"KOSPI",  value:"6,258.77", delta:"▼0.60%", cls:"down-kr" },
-        { name:"KOSDAQ", value:"798.81",   delta:"▼0.36%", cls:"down-kr" },
+        { name:"KOSPI",  value:"6,258.77", delta:"▼37.61 (-0.60%)", cls:"down-kr" },
+        { name:"KOSDAQ", value:"798.81",   delta:"▼2.86 (-0.36%)",  cls:"down-kr" },
         { name:"USD/KRW", value:"1,416.10", delta:"▼7.70원", cls:"down-kr" },
       ],
       breadth: "등락 종목 비율 코스피 <span class=\"mono up-kr\">상승 554</span> : <span class=\"mono down-kr\">하락 322</span> · 코스닥 <span class=\"mono up-kr\">상승 808</span> : <span class=\"mono down-kr\">하락 829</span>",
@@ -522,9 +522,9 @@
     },
     us: {
       indices: [
-        { name:"S&P 500", value:"7,757.64",  delta:"▲0.62%", cls:"up-us" },
-        { name:"NASDAQ",  value:"26,690.62", delta:"▲1.30%", cls:"up-us" },
-        { name:"DOW",     value:"54,036.93", delta:"▲0.28%", cls:"up-us" },
+        { name:"S&P 500", value:"7,757.64",  delta:"▲47.68 (+0.62%)",  cls:"up-us" },
+        { name:"NASDAQ",  value:"26,690.62", delta:"▲342.27 (+1.30%)", cls:"up-us" },
+        { name:"DOW",     value:"54,036.93", delta:"▲151.83 (+0.28%)", cls:"up-us" },
       ],
       breadth: "등락 종목 비율 <span class=\"mono up-us\">상승 336</span> : <span class=\"mono down-us\">하락 167</span>",
       // cron-briefing.js가 매일 Upstash에 쌓는 실제 종가로 fetchLiveData()가 채웁니다.
@@ -607,14 +607,14 @@
     if (kospiJson.composite) {
       const c = kospiJson.composite;
       const d = fmtDelta(c.change, c.pct, { up: "up-kr", down: "down-kr" });
-      DATA.kr.indices[0] = { name: "KOSPI", value: fmtNum(c.close), delta: d.short, cls: d.cls };
+      DATA.kr.indices[0] = { name: "KOSPI", value: fmtNum(c.close), delta: d.long, cls: d.cls };
       const t = DATA.ticker.find(t => t.name === "KOSPI");
       if (t) { t.value = fmtNum(c.close); t.delta = d.long; t.cls = d.cls; }
     }
     if (kosdaqJson.composite) {
       const c = kosdaqJson.composite;
       const d = fmtDelta(c.change, c.pct, { up: "up-kr", down: "down-kr" });
-      DATA.kr.indices[1] = { name: "KOSDAQ", value: fmtNum(c.close), delta: d.short, cls: d.cls };
+      DATA.kr.indices[1] = { name: "KOSDAQ", value: fmtNum(c.close), delta: d.long, cls: d.cls };
       const t = DATA.ticker.find(t => t.name === "KOSDAQ");
       if (t) { t.value = fmtNum(c.close); t.delta = d.long; t.cls = d.cls; }
     }
@@ -676,7 +676,7 @@
       if (!r || !Number.isFinite(r.close) || !Number.isFinite(r.pct)) return;
       const d = fmtDelta(r.change ?? 0, r.pct, { up: "up-us", down: "down-us" });
       const idxEntry = DATA.us.indices.find(i => i.name === name);
-      if (idxEntry) { idxEntry.value = fmtNum(r.close); idxEntry.delta = d.short; idxEntry.cls = d.cls; }
+      if (idxEntry) { idxEntry.value = fmtNum(r.close); idxEntry.delta = d.long; idxEntry.cls = d.cls; }
       const tEntry = DATA.ticker.find(t => t.name === name);
       if (tEntry) { tEntry.value = fmtNum(r.close); tEntry.delta = d.long; tEntry.cls = d.cls; }
     });
@@ -724,7 +724,7 @@
       const r = json[key];
       if (!r || !Number.isFinite(r.close) || !Number.isFinite(r.pct)) return;
       const d = fmtDelta(r.change ?? 0, r.pct, { up: "up-kr", down: "down-kr" });
-      DATA.kr.indices[idx] = { name, value: fmtNum(r.close), delta: d.short, cls: d.cls };
+      DATA.kr.indices[idx] = { name, value: fmtNum(r.close), delta: d.long, cls: d.cls };
       const t = DATA.ticker.find(t => t.name === name);
       if (t) { t.value = fmtNum(r.close); t.delta = d.long; t.cls = d.cls; }
     });
