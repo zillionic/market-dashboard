@@ -699,6 +699,31 @@ module.exports = async function handler(req, res) {
   }
 
   try {
+    // 지수 종가 히스토리 누적과 매크로 캘린더는 아래 텔레그램/Claude 브리핑 단계와 무관하니
+    // 먼저 독립적으로 처리합니다. (예전엔 이 아래, krRaw/usRaw·summarize()보다 뒤에 있었는데,
+    // 텔레그램 스크레이핑이나 Claude 요약이 실패하면 그 실패가 여기까지 전파돼서 각자 try/catch로
+    // 감싸놨어도 아예 실행조차 안 되는 버그가 있었습니다 — 히스토리가 계속 안 쌓이던 원인.)
+    try {
+      const { kr, us } = await fetchIndexCloses();
+      await Promise.all([
+        appendIndexHistory("KOSPI", kr.asOfDate, kr.kospi?.close),
+        appendIndexHistory("KOSDAQ", kr.asOfDate, kr.kosdaq?.close),
+        appendIndexHistory("USDKRW", kr.asOfDate, kr.usdkrw?.close),
+        appendIndexHistory("SP500", us.asOfDate, us.sp500?.close),
+        appendIndexHistory("NASDAQ", us.asOfDate, us.nasdaq?.close),
+        appendIndexHistory("DOW", us.asOfDate, us.dow?.close),
+      ]);
+    } catch (err) {
+      console.warn("지수 히스토리 누적 실패, 이 부분만 건너뜁니다:", err);
+    }
+
+    try {
+      const events = await fetchMacroCalendar();
+      await redisSet("macro:calendar", events);
+    } catch (err) {
+      console.warn("매크로 캘린더 갱신 실패, 이 부분만 건너뜁니다:", err);
+    }
+
     const [krRaw, usRaw] = await Promise.all([
       fetchLatestPost("shStrategy", ["코스피", "코스닥"]),
       fetchLatestPost("ehdwl", ["S&P", "나스닥"]),
@@ -728,29 +753,6 @@ module.exports = async function handler(req, res) {
       usSectorsBottom = bottom5.map(s => ({ ...s, reason: reasonMap[s.name] || "" }));
     } catch (err) {
       console.warn("해외 업종 데이터/이유 생성 실패, 이 부분만 건너뜁니다:", err);
-    }
-
-    // 지수 종가 히스토리 누적 (대시보드 추이 차트용) — 실패해도 나머지 저장에는 영향 없도록 별도 처리.
-    try {
-      const { kr, us } = await fetchIndexCloses();
-      await Promise.all([
-        appendIndexHistory("KOSPI", kr.asOfDate, kr.kospi?.close),
-        appendIndexHistory("KOSDAQ", kr.asOfDate, kr.kosdaq?.close),
-        appendIndexHistory("USDKRW", kr.asOfDate, kr.usdkrw?.close),
-        appendIndexHistory("SP500", us.asOfDate, us.sp500?.close),
-        appendIndexHistory("NASDAQ", us.asOfDate, us.nasdaq?.close),
-        appendIndexHistory("DOW", us.asOfDate, us.dow?.close),
-      ]);
-    } catch (err) {
-      console.warn("지수 히스토리 누적 실패, 이 부분만 건너뜁니다:", err);
-    }
-
-    // 매크로 캘린더 갱신 (대시보드 "이번 주 매크로 일정" 용) — FRED_API_KEY 없으면 조용히 건너뜁니다.
-    try {
-      const events = await fetchMacroCalendar();
-      await redisSet("macro:calendar", events);
-    } catch (err) {
-      console.warn("매크로 캘린더 갱신 실패, 이 부분만 건너뜁니다:", err);
     }
 
     const payload = {
