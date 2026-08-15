@@ -224,10 +224,19 @@
   .earn-col-heads .h-eps{ width:150px; flex-shrink:0; }
 
   /* 실적 시즌엔 한 주에 발표하는 종목이 많아져서 세로로 너무 길어질 수 있어서,
-     5개 정도 높이로 잘라두고 그 이상은 스크롤로 봅니다. overflow-y:auto라
-     내용이 5개 이하일 땐 자동으로 스크롤이 안 생기고, 마우스 휠·터치 스와이프
-     모두 브라우저 기본 동작으로 지원됩니다(별도 JS 불필요). */
-  .earn-list{ display:flex; flex-direction:column; gap:7px; max-height: 286px; overflow-y:auto; }
+     5개 정도 높이로 잘라두고 그 이상은 스크롤로 봅니다. 마우스 휠은 overflow-y:auto가
+     그대로 처리하고, 티커 벨트처럼 마우스 드래그·터치로도 끌어서 볼 수 있게
+     JS로 스크롤을 직접 제어합니다(initEarningsDrag). 오른쪽 스크롤바는 미관상
+     숨기고(휠·드래그로 여전히 스크롤은 됩니다), touch-action:none으로 브라우저
+     기본 터치 스크롤과 우리 드래그 로직이 서로 충돌하지 않게 합니다. */
+  .earn-list{
+    display:flex; flex-direction:column; gap:7px; max-height: 286px; overflow-y:auto;
+    cursor: grab; user-select: none; touch-action: none;
+    scrollbar-width: none;    /* Firefox */
+    -ms-overflow-style: none; /* 구형 Edge/IE */
+  }
+  .earn-list::-webkit-scrollbar{ display:none; } /* Chrome/Safari/Edge(Chromium) */
+  .earn-list.dragging{ cursor: grabbing; }
   .earn-row{
     display:flex; align-items:center; gap:10px;
     background: var(--panel-2); border: 1px solid var(--line-soft);
@@ -1135,6 +1144,38 @@
     requestAnimationFrame(tickerFrame);
   }
 
+  // 실적 목록도 티커 벨트처럼 마우스 드래그·터치로 끌어서 위아래로 볼 수 있게 합니다.
+  // (마우스 휠은 overflow-y:auto가 그대로 처리하니 별도 코드 불필요.)
+  function initEarningsDrag(){
+    const el = document.getElementById("earningsCalList");
+    if (!el) return;
+
+    let dragging = false;
+    let dragStartY = 0;
+    let dragStartScrollTop = 0;
+
+    el.addEventListener("pointerdown", (e) => {
+      dragging = true;
+      dragStartY = e.clientY;
+      dragStartScrollTop = el.scrollTop;
+      el.classList.add("dragging");
+      el.setPointerCapture(e.pointerId);
+    });
+    el.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      const deltaY = e.clientY - dragStartY;
+      el.scrollTop = dragStartScrollTop - deltaY;
+    });
+    const endDrag = (e) => {
+      if (!dragging) return;
+      dragging = false;
+      el.classList.remove("dragging");
+      try { el.releasePointerCapture(e.pointerId); } catch(err) { /* 이미 해제된 경우 무시 */ }
+    };
+    el.addEventListener("pointerup", endDrag);
+    el.addEventListener("pointercancel", endDrag);
+  }
+
   // 시황 코멘트는 "줄1<br>줄2<br>..." 형태 문자열로 옵니다 (cron-briefing.js의 summarize() 참고).
   // <br>로 나눠서 노션처럼 불릿 목록으로 보여줍니다 — 한 줄만 오면 굳이 불릿 없이 그대로 표시.
   function renderBriefing(elId, text){
@@ -1504,6 +1545,7 @@
     restoreSelectedTrend();
     render();
     initTickerDrag();
+    initEarningsDrag();
     startAutoRefresh();
   })();
 </script>
