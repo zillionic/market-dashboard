@@ -1153,6 +1153,40 @@
   }
 
   /* ============================================================
+     4-2. 자동 갱신 (탭을 열어둔 동안 주기적으로 재조회)
+     -----------------------------------------------------------
+     여기서 부르는 API는 전부 무료(Yahoo Finance/KRX Open API)거나 캐시만
+     읽어서(Upstash) 비용이 들지 않으므로, 탭이 보이는 동안 일정 주기로
+     계속 재조회해도 괜찮습니다. 탭이 백그라운드일 땐 멈춰서 불필요한
+     호출을 줄이고, 다시 포그라운드로 돌아오면 즉시 한 번 갱신합니다.
+     ============================================================ */
+  const LIVE_REFRESH_INTERVAL_MS = 60000; // 1분
+  let isRefreshing = false;
+
+  async function refreshLiveData(){
+    if(!USE_LIVE_API || isRefreshing) return;
+    isRefreshing = true;
+    try {
+      await fetchLiveData();
+      render();
+    } catch(err) {
+      console.warn("자동 갱신 실패:", err);
+    } finally {
+      isRefreshing = false;
+    }
+  }
+
+  function startAutoRefresh(){
+    if(!USE_LIVE_API) return;
+    setInterval(() => {
+      if(document.visibilityState === "visible") refreshLiveData();
+    }, LIVE_REFRESH_INTERVAL_MS);
+    document.addEventListener("visibilitychange", () => {
+      if(document.visibilityState === "visible") refreshLiveData();
+    });
+  }
+
+  /* ============================================================
      5. 초기 실행
      ============================================================ */
   (async function init(){
@@ -1166,6 +1200,7 @@
     if(USE_LIVE_API){ await fetchLiveData(); }
     restoreSelectedTrend();
     render();
+    startAutoRefresh();
   })();
 </script>
 
