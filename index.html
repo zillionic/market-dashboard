@@ -482,6 +482,9 @@
       { name:"WTI",     value:"$63.42",     delta:"▼0.85 (-1.32%)",  cls:"down-us" },
       { name:"GOLD",    value:"$2,345.60",  delta:"▲12.30 (+0.53%)", cls:"up-us" },
       { name:"BTC",     value:"$114,320.00",delta:"▲1,204.50 (+1.06%)", cls:"up-us" },
+      { name:"VIX",     value:"15.42",      delta:"▼0.38 (-2.41%)",  cls:"down-us" },
+      { name:"US10Y",   value:"4.15%",      delta:"▲3bp",            cls:"up-us" },
+      { name:"US2Y",    value:"3.68%",      delta:"▼2bp",            cls:"down-us" },
     ],
     kr: {
       indices: [
@@ -555,6 +558,7 @@
   const HISTORY_API = "/api/history";
   const MACRO_CALENDAR_API = "/api/macro-calendar";
   const EXTRA_TICKERS_API = "/api/extra-tickers";
+  const TREASURY_YIELDS_API = "/api/treasury-yields";
 
   function fmtNum(n, digits = 2){
     return n.toLocaleString("ko-KR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
@@ -855,30 +859,62 @@
   // 자동화하려면 완전 무료 대안으로 섹터 ETF(XLB·XLK·XLRE·XLI·XLV·XLY·XLU·XLF·XLP·XLC·XLE) 일별 종가를
   // stooq.com CSV로 받아 전일 대비 등락률을 직접 계산하는 방법이 있습니다 (us-indices.js와 같은 패턴).
 
-  // ---- [유가·금·비트코인] 상단 티커에만 표시 (Yahoo Finance, 실제 연동됨) ----
+  // ---- [유가·금·비트코인·VIX] 상단 티커에만 표시 (Yahoo Finance, 실제 연동됨) ----
   async function fetchExtraTickersRaw(){
     try {
       const res = await fetch(EXTRA_TICKERS_API, { cache: "no-store" });
       if (!res.ok) { console.warn("extra-tickers API 응답 실패:", res.status); return null; }
       return await res.json();
     } catch (err) {
-      console.warn("유가·금·비트코인 실시간 연동 실패, 스냅샷 값을 유지합니다:", err);
+      console.warn("유가·금·비트코인·VIX 실시간 연동 실패, 스냅샷 값을 유지합니다:", err);
       return null;
     }
   }
   function applyExtraTickers(json){
     if(!json) return;
     const rows = [
-      { key: "oil", name: "WTI" },
-      { key: "gold", name: "GOLD" },
-      { key: "btc", name: "BTC" },
+      { key: "oil", name: "WTI", prefix: "$" },
+      { key: "gold", name: "GOLD", prefix: "$" },
+      { key: "btc", name: "BTC", prefix: "$" },
+      { key: "vix", name: "VIX", prefix: "" }, // 달러 가격이 아니라 지수 값이라 $ 안 붙임
     ];
-    rows.forEach(({ key, name }) => {
+    rows.forEach(({ key, name, prefix }) => {
       const r = json[key];
       if (!r || !Number.isFinite(r.close) || !Number.isFinite(r.pct)) return;
       const d = fmtDelta(r.change ?? 0, r.pct, { up: "up-us", down: "down-us" });
       const t = DATA.ticker.find(t => t.name === name);
-      if (t) { t.value = `$${fmtNum(r.close)}`; t.delta = d.long; t.cls = d.cls; }
+      if (t) { t.value = `${prefix}${fmtNum(r.close)}`; t.delta = d.long; t.cls = d.cls; }
+    });
+  }
+
+  // ---- [미국 국채금리] 10년물·2년물 — 하루 한 번(영업일 마감) 갱신되는 FRED 데이터입니다 ----
+  async function fetchTreasuryYieldsRaw(){
+    try {
+      const res = await fetch(TREASURY_YIELDS_API, { cache: "no-store" });
+      if (!res.ok) { console.warn("treasury-yields API 응답 실패:", res.status); return null; }
+      return await res.json();
+    } catch (err) {
+      console.warn("국채금리 실시간 연동 실패, 스냅샷 값을 유지합니다:", err);
+      return null;
+    }
+  }
+  function applyTreasuryYields(json){
+    if(!json) return;
+    const rows = [
+      { key: "us10y", name: "US10Y" },
+      { key: "us2y", name: "US2Y" },
+    ];
+    rows.forEach(({ key, name }) => {
+      const r = json[key];
+      if (!r || !Number.isFinite(r.actual)) return;
+      const t = DATA.ticker.find(t => t.name === name);
+      if (!t) return;
+      t.value = `${r.actual.toFixed(2)}%`;
+      if (Number.isFinite(r.change)) {
+        const bp = Math.round(r.change * 100);
+        t.delta = `${bp >= 0 ? "▲" : "▼"}${Math.abs(bp)}bp`;
+        t.cls = bp >= 0 ? "up-us" : "down-us";
+      }
     });
   }
 
@@ -887,7 +923,7 @@
   // 덮어써야 하는 것처럼). 국내 업종 이유 온디맨드 보완만 최종 업종 목록이 필요해서 예외적으로
   // 나머지가 다 끝난 뒤 마지막에 따로 호출합니다.
   async function fetchLiveData(){
-    const [krMarketResult, breadthJson, usIndicesJson, krIndicesJson, briefingJson, historyJson, macroJson, extraTickersJson] =
+    const [krMarketResult, breadthJson, usIndicesJson, krIndicesJson, briefingJson, historyJson, macroJson, extraTickersJson, treasuryYieldsJson] =
       await Promise.all([
         fetchKrMarketBoth(),
         fetchBreadthRaw(),
@@ -897,6 +933,7 @@
         fetchHistoryRaw(),
         fetchMacroRaw(),
         fetchExtraTickersRaw(),
+        fetchTreasuryYieldsRaw(),
       ]);
 
     const { krBasDd } = applyKrMarket(krMarketResult);
@@ -904,6 +941,7 @@
     const { usMarketState } = applyUsIndices(usIndicesJson);
     const { krMarketState, krIndexAsOfDate } = applyKrIndices(krIndicesJson);
     applyExtraTickers(extraTickersJson);
+    applyTreasuryYields(treasuryYieldsJson);
     updateMarketBadges(krBasDd, krMarketState, krIndexAsOfDate, usMarketState);
     applyBriefing(briefingJson);
     applyHistory(historyJson);
