@@ -19,6 +19,8 @@
 //                                 (이 셋 중 하나라도 없으면 노션 업데이트는 조용히 건너뜁니다)
 //   FRED_API_KEY                - fred.stlouisfed.org/docs/api/api_key.html 에서 무료 발급
 //                                 (없으면 매크로 캘린더 갱신만 조용히 건너뜁니다)
+//   FINNHUB_API_KEY              - finnhub.io/register 에서 무료 발급 (개인용, 분당 60콜)
+//                                 (없으면 실적 캘린더 갱신만 조용히 건너뜁니다)
 //
 // 휴일 처리: 오늘이 한국 기준 토/일이면 아무 것도 안 하고 종료합니다.
 // Upstash에 저장된 값(가장 최근 평일 요약)이 그대로 유지되므로,
@@ -276,6 +278,141 @@ async function fetchMacroCalendar() {
     }
     return item;
   }));
+
+  events.sort((a, b) => a.date.localeCompare(b.date));
+  return events;
+}
+
+// ============================================================================
+// 실적 캘린더 — 이번 주(다음 7일) 실적 발표 예정인 S&P 500 종목만 추려서 보여줍니다.
+// - S&P 500 구성종목: GitHub에 공개된 datasets/s-and-p-500-companies CSV를 매번 새로
+//   받아옵니다(코드에 하드코딩하지 않음 — 종목 교체가 있어도 자동으로 반영됩니다).
+// - 실적 일정·EPS 실적/컨센서스: Finnhub 무료 티어(finnhub.io, 개인용, 분당 60콜).
+// - 시가총액: 역시 Finnhub(stock/profile2)에서 받아오는데, 매일 새로 부르면 호출이
+//   너무 많아질 수 있어서 Upstash에 종목별로 캐싱해두고, 캐시에 아직 없는 종목만
+//   (최대 MAX_NEW_MARKETCAP_LOOKUPS개) 그날 새로 조회합니다.
+// ============================================================================
+const FINNHUB_API_KEY = process.env.FINNHUB_API_KEY;
+const SP500_CONSTITUENTS_CSV_URL =
+  "https://raw.githubusercontent.com/datasets/s-and-p-500-companies/main/data/constituents.csv";
+
+const GICS_SECTOR_KO = {
+  "Information Technology": "IT",
+  "Health Care": "헬스케어",
+  "Financials": "금융",
+  "Consumer Discretionary": "임의소비재",
+  "Communication Services": "커뮤니케이션",
+  "Industrials": "산업재",
+  "Consumer Staples": "필수소비재",
+  "Energy": "에너지",
+  "Utilities": "유틸리티",
+  "Real Estate": "부동산",
+  "Materials": "소재",
+};
+
+// 이 데이터셋은 회사명에 쉼표가 들어갈 때만 따옴표로 감싸는 표준 CSV 형태라
+// 아주 단순한 상태기반 파서로도 안전하게 분리할 수 있습니다.
+function parseCsvLine(line) {
+  const cells = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') { inQuotes = !inQuotes; continue; }
+    if (ch === "," && !inQuotes) { cells.push(cur); cur = ""; continue; }
+    cur += ch;
+  }
+  cells.push(cur);
+  return cells;
+}
+
+async function fetchSp500Constituents() {
+  const res = await fetch(SP500_CONSTITUENTS_CSV_URL);
+  if (!res.ok) throw new Error(`S&P 500 구성종목 조회 실패: ${res.status}`);
+  const text = await res.text();
+  const lines = text.trim().split("\n");
+  const header = parseCsvLine(lines[0]);
+  const symbolIdx = header.indexOf("Symbol");
+  const nameIdx = header.indexOf("Security");
+  const sectorIdx = header.indexOf("GICS Sector");
+
+  const map = {};
+  for (let i = 1; i < lines.length; i++) {
+    const cells = parseCsvLine(lines[i]);
+    const symbol = cells[symbolIdx];
+    if (!symbol) continue;
+    map[symbol] = { name: cells[nameIdx], sector: cells[sectorIdx] };
+  }
+  return map;
+}
+
+async function fetchFinnhubEarningsCalendar(fromStr, toStr) {
+  const url = `https://finnhub.io/api/v1/calendar/earnings?from=${fromStr}&to=${toStr}&token=${FINNHUB_API_KEY}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Finnhub 실적 캘린더 조회 실패: ${res.status}`);
+  const json = await res.json();
+  return json.earningsCalendar || [];
+}
+
+async function fetchFinnhubMarketCap(symbol) {
+  const url = `https://finnhub.io/api/v1/stock/profile2?symbol=${encodeURIComponent(symbol)}&token=${FINNHUB_API_KEY}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Finnhub 시총 조회 실패 (${symbol}): ${res.status}`);
+  const json = await res.json();
+  return Number.isFinite(json.marketCapitalization) ? json.marketCapitalization : null; // 단위: 백만 달러
+}
+
+const MAX_NEW_MARKETCAP_LOOKUPS = 30; // 캐시에 없는 신규 종목에 대해서만, 하루 최대 이만큼만 새로 조회
+
+async function fetchEarningsCalendar() {
+  if (!FINNHUB_API_KEY) return [];
+
+  const fromStr = nyDateStr(0);
+  const toStr = nyDateStr(7);
+
+  const [sp500Map, rawEntries, mcapCache] = await Promise.all([
+    fetchSp500Constituents(),
+    fetchFinnhubEarningsCalendar(fromStr, toStr),
+    redisGet("earnings:marketcap").catch(() => null).then((v) => v || {}),
+  ]);
+
+  // S&P 500 구성종목만 남기고, 같은 종목이 여러 번 잡히면(드물게 있음) 첫 항목만 사용합니다.
+  const seen = new Set();
+  const filtered = [];
+  for (const e of rawEntries) {
+    if (!sp500Map[e.symbol]) continue;
+    if (seen.has(e.symbol)) continue;
+    seen.add(e.symbol);
+    filtered.push(e);
+  }
+
+  // 시총 캐시에 없는 종목만, 하루 상한 안에서 새로 조회합니다(나머지는 다음날 자동으로 채워짐).
+  const missing = filtered.filter((e) => !mcapCache[e.symbol]).slice(0, MAX_NEW_MARKETCAP_LOOKUPS);
+  for (const e of missing) {
+    try {
+      const mcap = await fetchFinnhubMarketCap(e.symbol);
+      if (mcap !== null) mcapCache[e.symbol] = { value: mcap, updatedAt: new Date().toISOString() };
+    } catch (err) {
+      console.warn(`Finnhub 시총 조회 실패, 건너뜀 (${e.symbol}):`, err);
+    }
+  }
+  if (missing.length > 0) {
+    try { await redisSet("earnings:marketcap", mcapCache); } catch (err) { console.warn("시총 캐시 저장 실패:", err); }
+  }
+
+  const events = filtered.map((e) => {
+    const info = sp500Map[e.symbol];
+    return {
+      date: e.date,
+      symbol: e.symbol,
+      name: info.name,
+      sector: GICS_SECTOR_KO[info.sector] || info.sector,
+      marketCap: mcapCache[e.symbol] ? mcapCache[e.symbol].value : null, // 단위: 백만 달러
+      epsActual: Number.isFinite(e.epsActual) ? e.epsActual : null,
+      epsEstimate: Number.isFinite(e.epsEstimate) ? e.epsEstimate : null,
+      hour: e.hour || null,
+    };
+  });
 
   events.sort((a, b) => a.date.localeCompare(b.date));
   return events;
@@ -863,6 +1000,25 @@ module.exports = async function handler(req, res) {
     return;
   }
 
+  // 진단용: ?debugEarnings=1 로 호출하면 이번 주 S&P 500 실적 캘린더만 확인합니다
+  // (기본은 Upstash에 쓰지 않음, FINNHUB_API_KEY 미설정이면 빈 배열이 정상입니다).
+  // ?debugEarnings=1&save=1 을 붙이면 대시보드가 실제로 읽는 캐시(earnings:calendar)에도
+  // 그 자리에서 바로 저장합니다.
+  if (req.query.debugEarnings) {
+    try {
+      const events = await fetchEarningsCalendar();
+      let saved = false;
+      if (req.query.save) {
+        await redisSet("earnings:calendar", events);
+        saved = true;
+      }
+      res.status(200).json({ hasApiKey: !!FINNHUB_API_KEY, saved, events });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+    return;
+  }
+
   // Vercel Cron 검증 (CRON_SECRET을 설정한 경우에만 강제)
   const auth = req.headers.authorization;
   if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -899,6 +1055,13 @@ module.exports = async function handler(req, res) {
       await redisSet("macro:calendar", events);
     } catch (err) {
       console.warn("매크로 캘린더 갱신 실패, 이 부분만 건너뜁니다:", err);
+    }
+
+    try {
+      const events = await fetchEarningsCalendar();
+      await redisSet("earnings:calendar", events);
+    } catch (err) {
+      console.warn("실적 캘린더 갱신 실패, 이 부분만 건너뜁니다:", err);
     }
 
     const [krRaw, usRaw] = await Promise.all([
