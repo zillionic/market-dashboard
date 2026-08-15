@@ -698,6 +698,18 @@ async function postToNotion(krRaw, usRaw) {
   await notionInsertBlocks(children);
 }
 
+// 대부분의 ?debug*=1 진단 라우트는 비용이 없어서(Claude·Notion 호출 없음) 인증 없이 열어둬도
+// 안전하지만, debugMarket(Claude 호출)·debugNotion(실제 노션 쓰기)처럼 진짜 비용/부작용이 있는
+// 라우트는 누구나 반복 호출해서 낭비시킬 수 있으므로 CRON_SECRET이 설정돼 있으면 요구합니다.
+// (CRON_SECRET 자체를 아직 설정 안 하셨다면 이 보호는 적용되지 않습니다 — 파일 상단 안내 참고.)
+function requireCronSecret(req, res) {
+  if (process.env.CRON_SECRET && req.headers.authorization !== `Bearer ${process.env.CRON_SECRET}`) {
+    res.status(401).json({ error: "Unauthorized — 비용이 발생하는 진단 라우트라 CRON_SECRET 인증이 필요합니다." });
+    return false;
+  }
+  return true;
+}
+
 module.exports = async function handler(req, res) {
   // 진단용: ?debugSectors=1 로 호출하면 Claude/Upstash 없이 Yahoo 섹터 지수 결과만 확인합니다
   // (비용 없음, 저장도 안 함 — CRON_SECRET 없이 브라우저로 바로 테스트 가능).
@@ -728,8 +740,9 @@ module.exports = async function handler(req, res) {
   }
 
   // 진단용: ?debugMarket=1 로 호출하면 새 "시장" 섹션 형식만 미리 확인합니다.
-  // (Claude 호출은 발생하지만 노션에는 올리지 않습니다 — 형식 검증용.)
+  // (Claude 호출은 발생하지만 노션에는 올리지 않습니다 — 형식 검증용. 비용이 발생하므로 인증 필요.)
   if (req.query.debugMarket) {
+    if (!requireCronSecret(req, res)) return;
     try {
       const [krRaw, usRaw] = await Promise.all([
         fetchLatestPost("shStrategy", ["코스피", "코스닥"]),
@@ -762,8 +775,10 @@ module.exports = async function handler(req, res) {
   }
 
   // 진단용: ?debugNotion=1 로 호출하면 Claude 없이 테스트 블록 하나만 노션에 실제로 꼽아봅니다.
-  // (연결·권한·앵커 블록 ID가 맞는지 확인용. 성공하면 노션 페이지에 테스트 항목이 실제로 생깁니다.)
+  // (연결·권한·앵커 블록 ID가 맞는지 확인용. 성공하면 노션 페이지에 테스트 항목이 실제로 생깁니다.
+  //  실제로 페이지에 쓰기 때문에 인증 필요.)
   if (req.query.debugNotion) {
+    if (!requireCronSecret(req, res)) return;
     try {
       await notionInsertBlocks([
         heading3(`테스트 — ${new Date().toISOString()}`),
