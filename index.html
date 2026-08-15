@@ -132,6 +132,7 @@
   .badge{
     display:inline-block; font-size:10.5px; padding:2px 8px; border-radius:999px;
     margin-top:5px; font-family:'JetBrains Mono', monospace; letter-spacing:0.03em;
+    white-space:nowrap;
   }
   .badge.snapshot{ background: rgba(var(--gold-rgb),0.15); color: var(--gold); border:1px solid rgba(var(--gold-rgb),0.35); }
   .badge.live{ background: rgba(47,168,79,0.15); color: var(--us-up); border:1px solid rgba(47,168,79,0.35); }
@@ -192,6 +193,13 @@
   .macro-cal-item .actual{ font-family:'JetBrains Mono', monospace; font-weight:700; color: var(--ink); white-space:nowrap; }
   .macro-cal-item .previous{ font-family:'JetBrains Mono', monospace; color: var(--ink-faint); white-space:nowrap; }
   .macro-cal-empty{ color: var(--ink-faint); font-size: 12.5px; }
+  /* 좁은 화면에서는 칩 안의 날짜·이름·발표치·직전치가 한 줄에 다 들어가려다 보니
+     이름(name)만 거의 0폭으로 눌려서 한 글자씩 줄바꿈되던 문제가 있었습니다.
+     칩을 한 줄 전체 폭으로 넓히고, 칩 내부도 필요하면 줄바꿈되게 해서 이름이 최소 한
+     줄의 절반 이상은 쓸 수 있게 합니다. */
+  @media (max-width: 480px){
+    .macro-cal-item{ width: 100%; flex-wrap: wrap; row-gap: 2px; }
+  }
 
   /* ---------- grid ---------- */
   .grid{ display:grid; grid-template-columns: 1fr 1fr; gap: 18px; }
