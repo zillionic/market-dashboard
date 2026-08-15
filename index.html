@@ -201,6 +201,58 @@
     .macro-cal-item{ width: 100%; flex-wrap: wrap; row-gap: 2px; }
   }
 
+  /* ---------- 매크로/실적 탭 전환 ---------- */
+  .cal-tabs{ display:flex; gap:6px; margin-bottom:14px; }
+  .cal-tab{
+    font-size:13px; font-weight:700; padding:7px 14px; border-radius:8px;
+    border: 1px solid var(--line-soft); background: var(--panel-2); color: var(--ink-faint);
+    cursor:pointer; transition:.15s ease; flex:1; text-align:center;
+  }
+  .cal-tab.active{ border-color: var(--gold); color: var(--gold); background: rgba(var(--gold-rgb),0.1); }
+  .cal-panel{ display:none; }
+  .cal-panel.active{ display:block; }
+
+  /* ---------- 실적 캘린더 ---------- */
+  .earn-col-heads{
+    display:flex; align-items:center; gap:10px; padding:0 12px; margin-bottom:6px;
+    font-size:10px; color: var(--ink-faint); text-transform:uppercase; letter-spacing:0.04em;
+  }
+  .earn-col-heads .h-date{ width:56px; flex-shrink:0; }
+  .earn-col-heads .h-co{ flex:1; }
+  .earn-col-heads .h-sector{ width:76px; flex-shrink:0; display:none; }
+  .earn-col-heads .h-mcap{ width:54px; flex-shrink:0; display:none; text-align:right; }
+  .earn-col-heads .h-eps{ width:150px; flex-shrink:0; }
+
+  .earn-list{ display:flex; flex-direction:column; gap:7px; }
+  .earn-row{
+    display:flex; align-items:center; gap:10px;
+    background: var(--panel-2); border: 1px solid var(--line-soft);
+    border-radius:8px; padding:8px 12px; font-size:12.5px;
+  }
+  .earn-row .date{ font-family:'JetBrains Mono', monospace; color: var(--gold); font-weight:700; white-space:nowrap; width:56px; flex-shrink:0; }
+  .earn-row .co{ flex:1; min-width:0; }
+  .earn-row .co .ticker{ color: var(--ink-faint); font-size:11px; margin-left:5px; font-family:'JetBrains Mono', monospace; }
+  .earn-row .co .name{ color: var(--ink); font-weight:600; }
+  .earn-row .sector{ font-size:10.5px; color: var(--ink-faint); white-space:nowrap; display:none; width:76px; flex-shrink:0; }
+  .earn-row .mcap{
+    font-family:'JetBrains Mono', monospace; font-size:12.5px; font-weight:700; color: var(--ink-dim);
+    white-space:nowrap; display:none; width:54px; flex-shrink:0; text-align:right;
+  }
+  .earn-row .eps{ font-family:'JetBrains Mono', monospace; white-space:nowrap; width:150px; flex-shrink:0; }
+  .earn-row .eps .label{ font-size:10px; color: var(--ink-faint); display:block; margin-bottom:1px; }
+  .earn-row .eps .val{ font-weight:700; }
+  .earn-row .eps .val.beat{ color: var(--us-up); }
+  .earn-row .eps .val.miss{ color: var(--us-down); }
+  .earn-row .eps .val.pending{ color: var(--ink-faint); font-weight:600; font-family:'Pretendard'; }
+  .earn-empty{ color: var(--ink-faint); font-size: 12.5px; }
+
+  @media (min-width:520px){
+    .earn-row .sector, .earn-col-heads .h-sector{ display:block; }
+  }
+  @media (min-width:600px){
+    .earn-row .mcap, .earn-col-heads .h-mcap{ display:block; }
+  }
+
   /* ---------- grid ---------- */
   .grid{ display:grid; grid-template-columns: 1fr 1fr; gap: 18px; }
   @media (max-width: 860px){ .grid{ grid-template-columns: 1fr; } }
@@ -339,10 +391,27 @@
 
   <section class="macro-calendar" id="macroCalendar">
     <div class="macro-cal-head">
-      <span class="eyebrow">Macro Calendar</span>
-      <h2>이번 주 매크로 일정</h2>
+      <span class="eyebrow">Calendar</span>
     </div>
-    <div class="macro-cal-list" id="macroCalList"></div>
+    <div class="cal-tabs">
+      <div class="cal-tab active" data-cal-panel="macro" onclick="selectCalTab('macro')">이번 주 매크로</div>
+      <div class="cal-tab" data-cal-panel="earnings" onclick="selectCalTab('earnings')">이번 주 실적</div>
+    </div>
+
+    <div class="cal-panel active" data-cal-panel="macro">
+      <div class="macro-cal-list" id="macroCalList"></div>
+    </div>
+
+    <div class="cal-panel" data-cal-panel="earnings">
+      <div class="earn-col-heads">
+        <span class="h-date">날짜</span>
+        <span class="h-co">종목</span>
+        <span class="h-sector">업종</span>
+        <span class="h-mcap">시총</span>
+        <span class="h-eps">EPS</span>
+      </div>
+      <div class="earn-list" id="earningsCalList"></div>
+    </div>
   </section>
 
   <main class="grid">
@@ -478,6 +547,8 @@
     updatedAt: "2026-08-07 15:30 KST · 국내·미국 정규장 마감 기준",
     // cron-briefing.js가 FRED에서 매일 가져와 Upstash에 쌓아둔 값으로 fetchLiveData()가 채웁니다.
     macroCalendar: [],
+    // cron-briefing.js가 Finnhub·S&P 500 구성종목에서 매일 가져와 쌓아둔 값으로 fetchLiveData()가 채웁니다.
+    earningsCalendar: [],
     // /api/briefing의 generatedAt — 크론이 마지막으로 "성공적으로" 실행된 시각 (실패 감지용).
     lastCronRun: null,
     ticker: [
@@ -565,6 +636,7 @@
   const KR_SECTOR_REASONS_API = "/api/kr-sector-reasons";
   const HISTORY_API = "/api/history";
   const MACRO_CALENDAR_API = "/api/macro-calendar";
+  const EARNINGS_CALENDAR_API = "/api/earnings-calendar";
   const EXTRA_TICKERS_API = "/api/extra-tickers";
   const TREASURY_YIELDS_API = "/api/treasury-yields";
 
@@ -862,6 +934,22 @@
     if (Array.isArray(j.events)) DATA.macroCalendar = j.events;
   }
 
+  // ---- [실적 캘린더] cron이 Finnhub·S&P 500 구성종목에서 매일 가져와 쌓아둔 이번 주 실적 발표 일정을 읽어옵니다 ----
+  async function fetchEarningsRaw(){
+    try {
+      const res = await fetch(EARNINGS_CALENDAR_API, { cache: "no-store" });
+      if (!res.ok) { console.warn("earnings-calendar API 응답 실패:", res.status); return null; }
+      return await res.json();
+    } catch (err) {
+      console.warn("실적 캘린더 실시간 연동 실패:", err);
+      return null;
+    }
+  }
+  function applyEarnings(j){
+    if(!j) return;
+    if (Array.isArray(j.events)) DATA.earningsCalendar = j.events;
+  }
+
   // ---- [해외 업종 등락률] Finviz — 공식 무료 API는 없음(Elite 구독형, finviz.com/elite). ----
   // 브라우저에서 finviz.com/groups?g=sector&v=140 를 매일 열어서 옮기는 게 현재 방식.
   // 자동화하려면 완전 무료 대안으로 섹터 ETF(XLB·XLK·XLRE·XLI·XLV·XLY·XLU·XLF·XLP·XLC·XLE) 일별 종가를
@@ -931,7 +1019,7 @@
   // 덮어써야 하는 것처럼). 국내 업종 이유 온디맨드 보완만 최종 업종 목록이 필요해서 예외적으로
   // 나머지가 다 끝난 뒤 마지막에 따로 호출합니다.
   async function fetchLiveData(){
-    const [krMarketResult, breadthJson, usIndicesJson, krIndicesJson, briefingJson, historyJson, macroJson, extraTickersJson, treasuryYieldsJson] =
+    const [krMarketResult, breadthJson, usIndicesJson, krIndicesJson, briefingJson, historyJson, macroJson, extraTickersJson, treasuryYieldsJson, earningsJson] =
       await Promise.all([
         fetchKrMarketBoth(),
         fetchBreadthRaw(),
@@ -942,6 +1030,7 @@
         fetchMacroRaw(),
         fetchExtraTickersRaw(),
         fetchTreasuryYieldsRaw(),
+        fetchEarningsRaw(),
       ]);
 
     const { krBasDd } = applyKrMarket(krMarketResult);
@@ -954,6 +1043,7 @@
     applyBriefing(briefingJson);
     applyHistory(historyJson);
     applyMacro(macroJson);
+    applyEarnings(earningsJson);
 
     await fetchAndApplyKrSectorReasons();
   }
@@ -1074,6 +1164,57 @@
         ${e.previous ? `<span class="previous mono">(직전 ${e.previous})</span>` : ""}
       </div>
     `).join("");
+  }
+
+  function formatShortSlashDate(iso){
+    const dow = ['일','월','화','수','목','금','토'];
+    const d = new Date(iso + "T00:00:00");
+    return `${d.getMonth()+1}/${d.getDate()}(${dow[d.getDay()]})`;
+  }
+
+  // marketCap 단위는 Finnhub 기준 "백만 달러"입니다.
+  function formatMarketCap(millions){
+    if(!Number.isFinite(millions)) return null;
+    if(millions >= 1e6) return `$${(millions/1e6).toFixed(1)}T`;
+    if(millions >= 1e3) return `$${Math.round(millions/1e3)}B`;
+    return `$${Math.round(millions)}M`;
+  }
+
+  function renderEarningsCalendar(events){
+    const el = document.getElementById("earningsCalList");
+    if(!el) return;
+    if(!Array.isArray(events) || events.length === 0){
+      el.innerHTML = `<div class="earn-empty">이번 주 예정된 S&amp;P 500 실적 발표가 없습니다.</div>`;
+      return;
+    }
+    el.innerHTML = events.map(e => {
+      const mcapStr = formatMarketCap(e.marketCap);
+      let epsHtml;
+      if(Number.isFinite(e.epsActual)){
+        const hasEst = Number.isFinite(e.epsEstimate);
+        const cls = hasEst ? (e.epsActual >= e.epsEstimate ? "beat" : "miss") : "";
+        const estStr = hasEst ? ` (예상 $${e.epsEstimate.toFixed(2)})` : "";
+        epsHtml = `<span class="label">EPS 실적</span><span class="val ${cls}">$${e.epsActual.toFixed(2)}${estStr}</span>`;
+      } else if(Number.isFinite(e.epsEstimate)){
+        epsHtml = `<span class="label">발표 예정</span><span class="val pending">컨센서스 $${e.epsEstimate.toFixed(2)}</span>`;
+      } else {
+        epsHtml = `<span class="label">발표 예정</span><span class="val pending">컨센서스 없음</span>`;
+      }
+      return `
+        <div class="earn-row">
+          <span class="date mono">${formatShortSlashDate(e.date)}</span>
+          <span class="co"><span class="name">${e.name}</span><span class="ticker">${e.symbol}</span></span>
+          <span class="sector">${e.sector || ""}</span>
+          <span class="mcap">${mcapStr || ""}</span>
+          <span class="eps">${epsHtml}</span>
+        </div>
+      `;
+    }).join("");
+  }
+
+  function selectCalTab(panel){
+    document.querySelectorAll(".cal-tab").forEach(t => t.classList.toggle("active", t.dataset.calPanel === panel));
+    document.querySelectorAll(".cal-panel").forEach(p => p.classList.toggle("active", p.dataset.calPanel === panel));
   }
 
   // 크론(api/cron-briefing.js)이 마지막으로 성공한 시각을 보여줘서, 며칠째 안 돌고 있는데
@@ -1258,6 +1399,7 @@
 
     renderTicker();
     renderMacroCalendar(DATA.macroCalendar);
+    renderEarningsCalendar(DATA.earningsCalendar);
 
     renderIndexRow("kr-index-row", DATA.kr.indices, "kr");
     updateTrendChart("kr");
