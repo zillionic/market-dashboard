@@ -337,14 +337,24 @@
   .heat-tile{
     border-radius: 8px; padding: 10px 10px; min-height: 58px;
     display:flex; flex-direction:column; justify-content:space-between;
-    border: 1px solid var(--line-soft);
+    border: 1px solid var(--line-soft); cursor:pointer;
+    transition: border-color 0.15s ease;
   }
+  .heat-tile:hover{ border-color: var(--gold); }
   .heat-tile .name{ font-size: 11px; font-weight:600; line-height:1.3; }
   .heat-tile .pct{ font-size: 12.5px; font-weight:800; }
 
   .sectorlist{ margin-bottom: 4px; }
-  .sector-row{ padding: 9px 0; border-bottom: 1px solid var(--line-soft); }
+  .sector-row{
+    padding: 9px 0; border-bottom: 1px solid var(--line-soft);
+    transition: background-color 0.4s ease, box-shadow 0.4s ease;
+  }
   .sector-row:last-child{ border-bottom: none; }
+  /* 히트맵 타일 클릭 시 해당 이유로 스크롤한 뒤 잠깐 반짝여서 눈에 띄게 합니다. */
+  .sector-row.flash{
+    background: rgba(var(--gold-rgb), 0.12);
+    box-shadow: inset 0 0 0 1px rgba(var(--gold-rgb), 0.5);
+  }
   .sector-row .head{
     display:flex; justify-content:space-between; align-items:baseline;
     font-size: 13.5px; font-weight: 600; margin-bottom: 3px;
@@ -1320,13 +1330,15 @@
     return { bg: `rgba(${rgb},${alpha.toFixed(2)})`, text: textColor };
   }
 
-  function renderSectorHeatmap(elId, data){
+  // reasonsId를 같이 받아서, 각 타일이 자기 업종의 이유 행(id="{reasonsId}-row-{i}")을
+  // 가리키는 data-target을 갖게 합니다 — 클릭하면 그 행으로 스크롤+반짝임(아래 initSectorHeatmapClicks).
+  function renderSectorHeatmap(elId, reasonsId, data){
     const maxAbs = Math.max(...data.map(d => Math.abs(d.pct)), 0.01);
-    document.getElementById(elId).innerHTML = data.map(d => {
+    document.getElementById(elId).innerHTML = data.map((d, i) => {
       const isPos = d.pct >= 0;
       const c = heatTileColor(d.pct, maxAbs);
       return `
-      <div class="heat-tile" style="background:${c.bg};">
+      <div class="heat-tile" style="background:${c.bg};" data-target="${reasonsId}-row-${i}">
         <span class="name" style="color:${c.text}">${d.name}</span>
         <span class="pct mono" style="color:${c.text}">${isPos ? '+' : ''}${d.pct.toFixed(2)}%</span>
       </div>`;
@@ -1335,11 +1347,11 @@
 
   function renderSectorSection(barsId, reasonsId, top5, bottom5){
     const combined = [...top5, ...bottom5];
-    renderSectorHeatmap(barsId, combined);
-    document.getElementById(reasonsId).innerHTML = combined.map(d => {
+    renderSectorHeatmap(barsId, reasonsId, combined);
+    document.getElementById(reasonsId).innerHTML = combined.map((d, i) => {
       const isPos = d.pct >= 0;
       return `
-      <div class="sector-row">
+      <div class="sector-row" id="${reasonsId}-row-${i}">
         <div class="head">
           <span>${d.name}</span>
           <span class="mono pct ${isPos ? 'up-us' : 'down-us'}">${isPos ? '+' : ''}${d.pct.toFixed(2)}%</span>
@@ -1347,6 +1359,24 @@
         <div class="reason">${d.reason}</div>
       </div>`;
     }).join("");
+  }
+
+  // 히트맵 타일 클릭 → 해당 업종의 이유로 스크롤 + 잠깐 반짝임. innerHTML이 매 갱신마다
+  // 통째로 교체되니, 타일 개개에 리스너를 다는 대신 안 바뀌는 부모 컨테이너에 위임합니다.
+  function initSectorHeatmapClicks(){
+    ["kr-sector-bars", "us-sector-bars"].forEach(id => {
+      const el = document.getElementById(id);
+      if (!el) return;
+      el.addEventListener("click", (e) => {
+        const tile = e.target.closest(".heat-tile");
+        if (!tile) return;
+        const target = document.getElementById(tile.dataset.target);
+        if (!target) return;
+        target.scrollIntoView({ behavior: "smooth", block: "center" });
+        target.classList.add("flash");
+        setTimeout(() => target.classList.remove("flash"), 1200);
+      });
+    });
   }
 
   /* ---------- 추이 차트 (스파크라인) ---------- */
@@ -1577,6 +1607,7 @@
     render();
     initTickerDrag();
     initEarningsDrag();
+    initSectorHeatmapClicks();
     startAutoRefresh();
   })();
 </script>
