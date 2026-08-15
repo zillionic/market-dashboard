@@ -23,6 +23,8 @@
     --kr-down:#e0393e;
     --us-up:#2fa84f;
     --us-down:#e0393e;
+    --up-rgb:47,168,79;
+    --down-rgb:224,57,62;
   }
   /* 라이트 테마: "Terminal Slate" 팔레트 — 슬레이트 그레이 배경 + 인디고 블루 포인트.
      --gold 변수명은 그대로 두되(코드 전반에서 "포인트색"으로 재사용되는 이름이라
@@ -42,8 +44,10 @@
     --kr-down:#c22a2f;
     --us-up:#1f7a3d;
     --us-down:#c22a2f;
+    --up-rgb:31,122,61;
+    --down-rgb:194,42,47;
   }
-  html, body, .panel, .tick, .index-card, .barbase-div{
+  html, body, .panel, .tick, .index-card, .heat-tile{
     transition: background-color 0.25s ease, border-color 0.25s ease, color 0.25s ease;
   }
   *{box-sizing:border-box; margin:0; padding:0;}
@@ -166,6 +170,11 @@
   .tick .name{ font-size: 9.5px; color: var(--ink-faint); letter-spacing: 0.05em; }
   .tick .val{ font-size: 12.5px; font-weight: 600; }
   .tick .delta{ font-size: 10.5px; font-weight:500; }
+  .tick .delta-row{ display:flex; align-items:center; gap:4px; }
+  .tick .sentiment-badge{
+    font-size: 8.5px; font-weight:700; padding: 1px 5px; border-radius: 999px;
+    border: 1px solid; white-space:nowrap;
+  }
   .up-kr{ color: var(--kr-up); }
   .down-kr{ color: var(--kr-down); }
   .up-us{ color: var(--us-up); }
@@ -320,19 +329,18 @@
 
   .sub{ font-size: 12px; letter-spacing: 0.06em; color: var(--ink-faint); text-transform: uppercase; margin-bottom: 10px; }
 
-  .barlist{ margin-bottom: 16px; }
-  .barrow{
-    display:grid; grid-template-columns: 96px 1fr 62px; align-items:center;
-    gap: 10px; padding: 6px 0; font-size: 13px;
+  /* 업종 TOP5/BOTTOM5을 막대 대신 색 격자(히트맵)로 — 등락 강도를 색 진하기로 바로 읽습니다. */
+  .heatmap{
+    display:grid; grid-template-columns: repeat(auto-fill, minmax(90px, 1fr));
+    gap: 6px; margin-bottom: 16px;
   }
-  .barrow .label{ color: var(--ink); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
-  .barrow .val{ text-align:right; font-size:12.5px; font-weight:600; }
-
-  .barbase-div{ position:relative; height: 8px; border-radius: 3px; }
-  .div-center{ position:absolute; left:50%; top:-3px; bottom:-3px; width:1px; background: var(--line); }
-  .bar-div{ position:absolute; top:0; height:100%; }
-  .bar-div.pos{ left:50%; background: var(--us-up); border-radius: 0 3px 3px 0; }
-  .bar-div.neg{ right:50%; background: var(--us-down); border-radius: 3px 0 0 3px; }
+  .heat-tile{
+    border-radius: 8px; padding: 10px 10px; min-height: 58px;
+    display:flex; flex-direction:column; justify-content:space-between;
+    border: 1px solid var(--line-soft);
+  }
+  .heat-tile .name{ font-size: 11px; font-weight:600; line-height:1.3; }
+  .heat-tile .pct{ font-size: 12.5px; font-weight:800; }
 
   .sectorlist{ margin-bottom: 4px; }
   .sector-row{ padding: 9px 0; border-bottom: 1px solid var(--line-soft); }
@@ -458,7 +466,7 @@
       <div class="divider"></div>
 
       <div class="sub">업종 등락 TOP5 · BOTTOM5</div>
-      <div class="barlist" id="kr-sector-bars"></div>
+      <div class="heatmap" id="kr-sector-bars"></div>
 
       <div class="sub" style="margin-top:16px;">업종별 시황</div>
       <div class="sectorlist" id="kr-sector-reasons"></div>
@@ -488,7 +496,7 @@
       <div class="divider"></div>
 
       <div class="sub">업종 등락 TOP5 · BOTTOM5</div>
-      <div class="barlist" id="us-sector-bars"></div>
+      <div class="heatmap" id="us-sector-bars"></div>
 
       <div class="sub" style="margin-top:16px;">업종별 시황</div>
       <div class="sectorlist" id="us-sector-reasons"></div>
@@ -579,7 +587,7 @@
       { name:"WTI",     value:"$63.42",     delta:"▼0.85 (-1.32%)",  cls:"down-us" },
       { name:"GOLD",    value:"$2,345.60",  delta:"▲12.30 (+0.53%)", cls:"up-us" },
       { name:"BTC",     value:"$114,320.00",delta:"▲1,204.50 (+1.06%)", cls:"up-us" },
-      { name:"VIX",     value:"15.42",      delta:"▼0.38 (-2.41%)",  cls:"down-us" },
+      { name:"VIX",     value:"15.42",      delta:"▼0.38 (-2.41%)",  cls:"down-us", badge: vixSentiment(15.42) },
       { name:"US10Y",   value:"4.15%",      delta:"▲3bp",            cls:"up-us" },
       { name:"US2Y",    value:"3.68%",      delta:"▼2bp",            cls:"down-us" },
     ],
@@ -984,6 +992,14 @@
       return null;
     }
   }
+  // 시장에서 흔히 쓰는 눈금(15/20/30)으로 VIX 숫자를 한 단어 체감으로 바꿔줍니다.
+  function vixSentiment(v){
+    if (v < 15) return { text: "안정", bg: "rgba(var(--up-rgb),0.15)", color: "var(--us-up)", border: "rgba(var(--up-rgb),0.35)" };
+    if (v < 20) return { text: "보통", bg: "rgba(140,147,163,0.15)", color: "var(--ink-dim)", border: "rgba(140,147,163,0.3)" };
+    if (v < 30) return { text: "경계", bg: "rgba(var(--gold-rgb),0.15)", color: "var(--gold)", border: "rgba(var(--gold-rgb),0.35)" };
+    return { text: "공포", bg: "rgba(var(--down-rgb),0.15)", color: "var(--us-down)", border: "rgba(var(--down-rgb),0.35)" };
+  }
+
   function applyExtraTickers(json){
     if(!json) return;
     const rows = [
@@ -997,7 +1013,10 @@
       if (!r || !Number.isFinite(r.close) || !Number.isFinite(r.pct)) return;
       const d = fmtDelta(r.change ?? 0, r.pct, { up: "up-us", down: "down-us" });
       const t = DATA.ticker.find(t => t.name === name);
-      if (t) { t.value = `${prefix}${fmtNum(r.close)}`; t.delta = d.long; t.cls = d.cls; }
+      if (t) {
+        t.value = `${prefix}${fmtNum(r.close)}`; t.delta = d.long; t.cls = d.cls;
+        if (name === "VIX") t.badge = vixSentiment(r.close);
+      }
     });
   }
 
@@ -1077,7 +1096,13 @@
       <div class="tick">
         <span class="name">${t.name}</span>
         <span class="val mono">${t.value}</span>
-        <span class="delta mono ${t.cls}">${t.delta}</span>
+        ${t.badge
+          ? `<span class="delta-row">
+               <span class="delta mono ${t.cls}">${t.delta}</span>
+               <span class="sentiment-badge" style="background:${t.badge.bg};color:${t.badge.color};border-color:${t.badge.border}">${t.badge.text}</span>
+             </span>`
+          : `<span class="delta mono ${t.cls}">${t.delta}</span>`
+        }
       </div>
     `;
     const el = document.getElementById("ticker");
@@ -1286,26 +1311,31 @@
     `).join("");
   }
 
-  function renderDivergingBars(elId, data){
-    const max = Math.max(...data.map(d => Math.abs(d.pct)));
+  // pct 크기(절대값)에 비례해서 --up-rgb/--down-rgb를 진하게/연하게 섞은 타일 배경을 만듭니다.
+  function heatTileColor(pct, maxAbs){
+    const varName = pct >= 0 ? "--up-rgb" : "--down-rgb";
+    const rgb = getComputedStyle(document.documentElement).getPropertyValue(varName).trim();
+    const alpha = Math.min(Math.abs(pct) / (maxAbs || 1), 1) * 0.75 + 0.12;
+    const textColor = alpha > 0.45 ? "#fff" : `rgb(${rgb})`;
+    return { bg: `rgba(${rgb},${alpha.toFixed(2)})`, text: textColor };
+  }
+
+  function renderSectorHeatmap(elId, data){
+    const maxAbs = Math.max(...data.map(d => Math.abs(d.pct)), 0.01);
     document.getElementById(elId).innerHTML = data.map(d => {
-      const w = (Math.abs(d.pct)/max*50).toFixed(1);
       const isPos = d.pct >= 0;
+      const c = heatTileColor(d.pct, maxAbs);
       return `
-      <div class="barrow">
-        <div class="label">${d.name}</div>
-        <div class="barbase-div">
-          <div class="div-center"></div>
-          <div class="bar-div ${isPos ? 'pos' : 'neg'}" style="width:${w}%"></div>
-        </div>
-        <div class="val mono ${isPos ? 'up-us' : 'down-us'}">${isPos ? '+' : ''}${d.pct.toFixed(2)}%</div>
+      <div class="heat-tile" style="background:${c.bg};">
+        <span class="name" style="color:${c.text}">${d.name}</span>
+        <span class="pct mono" style="color:${c.text}">${isPos ? '+' : ''}${d.pct.toFixed(2)}%</span>
       </div>`;
     }).join("");
   }
 
   function renderSectorSection(barsId, reasonsId, top5, bottom5){
     const combined = [...top5, ...bottom5];
-    renderDivergingBars(barsId, combined);
+    renderSectorHeatmap(barsId, combined);
     document.getElementById(reasonsId).innerHTML = combined.map(d => {
       const isPos = d.pct >= 0;
       return `
