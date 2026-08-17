@@ -16,6 +16,7 @@
     --line-soft:#1c2028;
     --ink:#e9ecf1;
     --ink-dim:#8c93a3;
+    --ink-dim-rgb:140,147,163;
     --ink-faint:#5a6070;
     --gold:#c9a227;
     --gold-rgb:201,162,39;
@@ -37,6 +38,7 @@
     --line-soft:#e7ebf0;
     --ink:#10141c;
     --ink-dim:#4d5566;
+    --ink-dim-rgb:77,85,102;
     --ink-faint:#868f9e;
     --gold:#2f6fed;
     --gold-rgb:47,111,237;
@@ -142,7 +144,7 @@
     white-space:nowrap;
   }
   .badge.snapshot{ background: rgba(var(--gold-rgb),0.15); color: var(--gold); border:1px solid rgba(var(--gold-rgb),0.35); }
-  .badge.live{ background: rgba(47,168,79,0.15); color: var(--us-up); border:1px solid rgba(47,168,79,0.35); }
+  .badge.live{ background: rgba(var(--up-rgb),0.15); color: var(--us-up); border:1px solid rgba(var(--up-rgb),0.35); }
   /* LIVE인데 데이터 소스 일부/전부가 갱신 실패한 경우 — API 연동 모드(USE_LIVE_API)와
      실제 연동 성공 여부는 별개라서, "LIVE" 배지가 실패 중에도 항상 초록으로 고정되던
      문제를 고치기 위해 추가했습니다(renderLiveDataWarn의 liveConnectionState 참고). */
@@ -1144,7 +1146,7 @@
   // 시장에서 흔히 쓰는 눈금(15/20/30)으로 VIX 숫자를 한 단어 체감으로 바꿔줍니다.
   function vixSentiment(v){
     if (v < 15) return { text: "안정", bg: "rgba(var(--up-rgb),0.15)", color: "var(--us-up)", border: "rgba(var(--up-rgb),0.35)" };
-    if (v < 20) return { text: "보통", bg: "rgba(140,147,163,0.15)", color: "var(--ink-dim)", border: "rgba(140,147,163,0.3)" };
+    if (v < 20) return { text: "보통", bg: "rgba(var(--ink-dim-rgb),0.15)", color: "var(--ink-dim)", border: "rgba(var(--ink-dim-rgb),0.3)" };
     if (v < 30) return { text: "경계", bg: "rgba(var(--gold-rgb),0.15)", color: "var(--gold)", border: "rgba(var(--gold-rgb),0.35)" };
     return { text: "공포", bg: "rgba(var(--down-rgb),0.15)", color: "var(--us-down)", border: "rgba(var(--down-rgb),0.35)" };
   }
