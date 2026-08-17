@@ -526,6 +526,19 @@ function isWeekendKST() {
   return day === 0 || KR_HOLIDAYS.includes(iso);
 }
 
+const US_MARKET_CLOSE_HOUR = 16; // 미국 정규장 마감 4:00pm ET (서머타임 여부와 무관하게 America/New_York 기준 시각으로 판단)
+
+// 지금 크론은 UTC 22:30(vercel.json)에 돌아서 미국 정규장 마감(EST 21:00Z / EDT 20:00Z UTC)보다
+// 항상 늦게 실행되니 이 체크가 걸릴 일이 원래는 없지만, 나중에 크론 시각이 바뀌어도 미국 업종
+// 시황이 장중 값을 조용히 캡처하지 않도록 명시적으로 막아둡니다(국내 kr-sectors.js의
+// candidateDates()와 같은 목적).
+function isUsMarketClosedNow() {
+  const nyNow = new Date(new Date().toLocaleString("en-US", { timeZone: "America/New_York" }));
+  const day = nyNow.getDay(); // 0=일 6=토
+  if (day === 0 || day === 6) return true; // 주말은 이미 마감 상태
+  return nyNow.getHours() >= US_MARKET_CLOSE_HOUR;
+}
+
 // KRX Open API에서 오늘 KOSPI 업종 TOP5/BOTTOM5를 직접 가져옵니다 (api/kr-sectors.js와
 // 로직은 같지만, fetchIndexCloses()와 같은 이유로 자기 자신을 다시 호출하지 않습니다).
 const KRX_AUTH_KEY = process.env.KRX_AUTH_KEY;
@@ -1118,6 +1131,9 @@ module.exports = async function handler(req, res) {
 
     let usSectorsTop = [], usSectorsBottom = [], usSectorReasons = [];
     try {
+      if (!isUsMarketClosedNow()) {
+        throw new Error("미국 정규장이 아직 마감 전이라(장중 값 캡처 방지) 이번 실행에서는 건너뜁니다.");
+      }
       const { top5, bottom5 } = await fetchUsSectorIndices();
       usSectorReasons = await generateSectorReasons(usRaw, [...top5, ...bottom5], "미국 증시");
       const reasonMap = {};
