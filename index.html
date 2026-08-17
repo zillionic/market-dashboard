@@ -192,6 +192,16 @@
   /* 실적 캘린더와 동일하게 항목마다 한 줄씩 세로로 쌓습니다(예전엔 칩이 flex-wrap으로
      여러 개가 한 줄에 같이 들어갔는데, 날짜별로 스캔하기 어려워서 통일했습니다). */
   .macro-cal-list{ display:flex; flex-direction:column; gap:7px; }
+  /* 뉴스는 국내·해외 합쳐서 최대 10개까지 나올 수 있어서(실적 캘린더와 같은 이유로)
+     5개 정도 높이로 잘라두고 그 이상은 실적처럼 드래그·휠로 스크롤합니다. */
+  #newsCalList{
+    max-height: 286px; overflow-y:auto;
+    cursor: grab; user-select: none; touch-action: none;
+    scrollbar-width: none;    /* Firefox */
+    -ms-overflow-style: none; /* 구형 Edge/IE */
+  }
+  #newsCalList::-webkit-scrollbar{ display:none; } /* Chrome/Safari/Edge(Chromium) */
+  #newsCalList.dragging{ cursor: grabbing; }
   .macro-cal-item{
     display:flex; align-items:center; gap:10px;
     background: var(--panel-2); border: 1px solid var(--line-soft);
@@ -1323,10 +1333,10 @@
     requestAnimationFrame(tickerFrame);
   }
 
-  // 실적 목록도 티커 벨트처럼 마우스 드래그·터치로 끌어서 위아래로 볼 수 있게 합니다.
+  // 실적·뉴스 목록도 티커 벨트처럼 마우스 드래그·터치로 끌어서 위아래로 볼 수 있게 합니다.
   // (마우스 휠은 overflow-y:auto가 그대로 처리하니 별도 코드 불필요.)
-  function initEarningsDrag(){
-    const el = document.getElementById("earningsCalList");
+  function initListDrag(elId){
+    const el = document.getElementById(elId);
     if (!el) return;
 
     let dragging = false;
@@ -1839,7 +1849,8 @@
     restoreSelectedTrend();
     render();
     initTickerDrag();
-    initEarningsDrag();
+    initListDrag("earningsCalList");
+    initListDrag("newsCalList");
     initSectorHeatmapClicks();
     startAutoRefresh();
   })();
