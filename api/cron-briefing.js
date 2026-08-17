@@ -728,9 +728,16 @@ const DART_NOTABLE_PATTERNS = [
   { label: "무상증자", pattern: /무상증자/ },
   { label: "자기주식 취득", pattern: /자기주식.*취득/ },
   { label: "자기주식 처분", pattern: /자기주식.*처분/ },
-  { label: "전환사채 발행", pattern: /전환사채/ },
-  { label: "신주인수권부사채 발행", pattern: /신주인수권부사채/ },
-  { label: "교환사채 발행", pattern: /교환사채/ },
+  // "발행" 여부와 무관하게 사채 종류 키워드만 있으면 걸렸는데, 실제로는 "만기전취득"
+  // (조기상환)ㆍ"재매각" 같은 발행과 반대되는 이벤트까지 전부 "발행"으로 잘못 분류되는
+  // 문제가 있었습니다(예: "자기교환사채만기전취득결정"). 조기취득/상환/재매각 패턴을
+  // 먼저 검사해서 우선 매칭되게 하고, 나머지만 "발행"으로 분류합니다.
+  { label: "전환사채 조기취득·상환", pattern: /전환사채.*(만기전취득|조기상환|취득|상환)/ },
+  { label: "전환사채 발행", pattern: /전환사채.*발행/ },
+  { label: "신주인수권부사채 조기취득·재매각", pattern: /신주인수권부사채.*(만기전취득|조기상환|취득|재매각|매각)/ },
+  { label: "신주인수권부사채 발행", pattern: /신주인수권부사채.*발행/ },
+  { label: "교환사채 조기취득·상환", pattern: /교환사채.*(만기전취득|조기상환|취득|상환)/ },
+  { label: "교환사채 발행", pattern: /교환사채.*발행/ },
   { label: "회사분할", pattern: /회사분할/ },
   { label: "회사합병", pattern: /회사합병|합병\s*결정/ },
   { label: "주식교환·이전", pattern: /주식교환|주식이전/ },
@@ -751,7 +758,10 @@ const DART_AMENDMENT_TITLE_PATTERN = /^\[(기재정정|첨부정정|첨부추가
 
 async function fetchDartDisclosuresRaw(dateStr) {
   let rows = [];
-  for (let page = 1; page <= 20; page++) {
+  // total_page가 이 상한을 넘는 비정상 상황(무한루프)을 막기 위한 안전장치일 뿐이라
+  // 넉넉하게 잡습니다 — 실제로 60(=6,000건)을 밑도는 날에는 total_page를 만나는 대로
+  // 그전에 멈춥니다.
+  for (let page = 1; page <= 60; page++) {
     const url = `${DART_LIST_ENDPOINT}?crtfc_key=${DART_API_KEY}&bgn_de=${dateStr}&end_de=${dateStr}&page_no=${page}&page_count=100`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`DART API 오류 (${res.status})`);
