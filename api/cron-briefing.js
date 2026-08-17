@@ -1,7 +1,7 @@
 // api/cron-briefing.js
 // -----------------------------------------------------------------------------
 // Vercel Cron이 매일 아침 8시(KST) 자동 호출하는 함수 (스케줄은 vercel.json 참고).
-// 국내는 신한투자증권·유안타증권·키움증권·교보증권, 해외는 미래에셋증권 리서치
+// 국내는 신한투자증권·유안타증권·키움증권, 해외는 미래에셋증권 리서치
 // 텔레그램 채널(KR_TELEGRAM_CHANNELS/US_TELEGRAM_CHANNELS 참고)의 최신 글을 읽어서
 // Claude API로 종합 5줄 개조식 요약을 만들고, Upstash Redis에 저장합니다. 국내는
 // 여러 소스를 종합하되 증권사별로 시각이 갈리는 이슈는 각각 대비해서 표시합니다.
@@ -493,17 +493,15 @@ async function fetchLatestPost(channel, mustContainAll = []) {
 // 진행되도록 Promise.allSettled로 개별 실패를 허용합니다.
 //
 // ⚠️ mustContainAll 키워드는 신한(shStrategy)·미래에셋(ehdwl)·유안타(tRadarnewsdesk)·
-// 키움(KiwoomResearch) 채널은 ?debugRaw=1로 실제 확인됨. 교보증권(KyoboRSC)은 아직
-// 실제로 이 키워드로 오늘자 시황 글을 잘 찾아내는지 확인 전이라, 배포 후 ?debugRaw=1로
-// 직접 확인해주세요 — 메리츠증권처럼 시황 형태 글이 아예 없는 채널이면 자동으로
-// 제외되긴 하지만(위 fetchLatestPost 참고), 다른 형식으로 시황을 올리는 채널이면
-// 키워드를 다르게 튜닝해야 할 수 있습니다.
+// 키움(KiwoomResearch) 채널 전부 ?debugRaw=1로 실제 확인됨. 새 채널을 추가할 땐
+// 배포 후 ?debugRaw=1로 먼저 확인해주세요 — 메리츠증권·교보증권처럼 이 채널이 오늘
+// 시황 형태 글 자체를 안 올렸거나(또는 전일 마감 시황을 다음날 올리는 등 발행
+// 주기가 다르거나) 형식이 안 맞으면 자동으로 제외됩니다(위 fetchLatestPost 참고).
 // ============================================================================
 const KR_TELEGRAM_CHANNELS = [
   { id: "shStrategy", firm: "신한투자증권" },
   { id: "tRadarnewsdesk", firm: "유안타증권" },
   { id: "KiwoomResearch", firm: "키움증권" },
-  { id: "KyoboRSC", firm: "교보증권" },
 ];
 const US_TELEGRAM_CHANNELS = [
   { id: "ehdwl", firm: "미래에셋증권" },
@@ -1131,7 +1129,7 @@ module.exports = async function handler(req, res) {
   }
 
   // 진단용: ?debugRaw=1 로 호출하면 Claude 호출 없이 각 채널에서 실제로 가져온 원문과
-  // 성공/실패 여부를 그대로 보여줍니다. 새로 추가한 채널(교보증권 등)이 실제로
+  // 성공/실패 여부를 그대로 보여줍니다. 새로 채널을 추가하면 실제로
   // mustContainAll 키워드로 오늘자 시황 글을 잘 찾아내는지 이걸로 확인하세요 — 못
   // 찾으면 해당 채널의 KR_TELEGRAM_CHANNELS 항목 옆에 채널별 키워드를 따로 지정해야
   // 할 수 있습니다.
