@@ -449,7 +449,11 @@ async function fetchEarningsCalendar() {
 // mustContainAll이 주어지면, 채널이 하루에 여러 번 다른 주제로 글을 올리는 경우
 // (예: 아침엔 "간밤 미국 시장 요약", 오후엔 "국내 마감 시황")를 대비해
 // 최신 글부터 거슬러 올라가며 해당 키워드를 모두 포함하는 첫 글을 찾습니다.
-// 못 찾으면 그냥 가장 최근 글을 반환합니다(안전장치).
+// 못 찾으면 null을 반환합니다(그 채널이 오늘 시황 형태 글을 안 올렸다는 뜻).
+// 예전엔 최신 글로 무조건 폴백했는데, 소스가 1개뿐이던 시절엔 "완전히 빈 결과보단
+// 낫다"는 논리가 맞았지만, 여러 채널을 종합하는 지금은 무관한 글(예: 개별 종목
+// 실적 리뷰)이 "그 증권사의 오늘 시황"으로 잘못 채택되는 게 소스 하나가 빠지는
+// 것보다 더 나쁩니다(메리츠증권 채널에서 실제로 확인된 문제).
 function stripHtml(rawHtml) {
   return rawHtml
     .replace(/<br\s*\/?>/g, "\n")
@@ -477,7 +481,7 @@ async function fetchLatestPost(channel, mustContainAll = []) {
       const text = stripHtml(blocks[i][1]);
       if (mustContainAll.every((kw) => text.includes(kw))) return text;
     }
-    // 조건에 맞는 글을 못 찾으면 최신 글로 폴백 (완전히 빈 결과보다 낫습니다)
+    return null;
   }
 
   return stripHtml(blocks[blocks.length - 1][1]);
@@ -505,15 +509,18 @@ const US_TELEGRAM_CHANNELS = [
 const KR_RAW_KEYWORDS = ["코스피", "코스닥"];
 const US_RAW_KEYWORDS = ["S&P", "나스닥"];
 
+// 채널별 성공/실패 사유를 전부 담아 반환합니다(디버그용). 실제 소스로 쓸 것만
+// 추리려면 onlySuccessful()을 거치세요.
 async function fetchMarketSources(channels, mustContainAll) {
   const settled = await Promise.allSettled(channels.map((c) => fetchLatestPost(c.id, mustContainAll)));
-  return channels
-    .map((c, i) => ({
-      firm: c.firm,
-      text: settled[i].status === "fulfilled" ? settled[i].value : null,
-      error: settled[i].status === "rejected" ? String(settled[i].reason) : null,
-    }))
-    .filter((s) => s.text);
+  return channels.map((c, i) => {
+    if (settled[i].status === "rejected") return { firm: c.firm, text: null, error: String(settled[i].reason) };
+    if (settled[i].value === null) return { firm: c.firm, text: null, error: "오늘자 시황 형태 글을 찾지 못함(키워드 불일치)" };
+    return { firm: c.firm, text: settled[i].value, error: null };
+  });
+}
+function onlySuccessful(sources) {
+  return sources.filter((s) => s.text);
 }
 
 // Claude 프롬프트에 넣을 "[증권사명]\n원문" 블록. 여러 소스일 때 Claude가 어느
@@ -1132,14 +1139,10 @@ module.exports = async function handler(req, res) {
         fetchMarketSources(KR_TELEGRAM_CHANNELS, KR_RAW_KEYWORDS),
         fetchMarketSources(US_TELEGRAM_CHANNELS, US_RAW_KEYWORDS),
       ]);
-      const failedFirms = (channels) => channels
-        .filter((c) => !krSources.concat(usSources).some((s) => s.firm === c.firm))
-        .map((c) => c.firm);
-      res.status(200).json({
-        kr: krSources,
-        us: usSources,
-        failedChannels: [...failedFirms(KR_TELEGRAM_CHANNELS), ...failedFirms(US_TELEGRAM_CHANNELS)],
-      });
+      const failedChannels = [...krSources, ...usSources]
+        .filter((s) => !s.text)
+        .map((s) => `${s.firm}: ${s.error}`);
+      res.status(200).json({ kr: krSources, us: usSources, failedChannels });
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }
@@ -1155,7 +1158,7 @@ module.exports = async function handler(req, res) {
         fetchMarketSources(KR_TELEGRAM_CHANNELS, KR_RAW_KEYWORDS),
         fetchMarketSources(US_TELEGRAM_CHANNELS, US_RAW_KEYWORDS),
       ]);
-      const marketSection = await generateMarketSection(krSources, usSources);
+      const marketSection = await generateMarketSection(onlySuccessful(krSources), onlySuccessful(usSources));
       res.status(200).json(marketSection);
     } catch (err) {
       res.status(500).json({ error: String(err) });
@@ -1339,11 +1342,16 @@ module.exports = async function handler(req, res) {
       console.warn("실적 캘린더 갱신 실패, 이 부분만 건너뜁니다:", err);
     }
 
-    // 채널 하나가 그날 실패해도(휴가, 형식 변경 등) 나머지 소스만으로 계속 진행됩니다.
-    const [krSources, usSources] = await Promise.all([
+    // 채널 하나가 그날 실패해도(휴가, 형식 변경, 시황 형태 글 없음 등) 나머지
+    // 소스만으로 계속 진행됩니다.
+    const [krSourcesRaw, usSourcesRaw] = await Promise.all([
       fetchMarketSources(KR_TELEGRAM_CHANNELS, KR_RAW_KEYWORDS),
       fetchMarketSources(US_TELEGRAM_CHANNELS, US_RAW_KEYWORDS),
     ]);
+    krSourcesRaw.filter((s) => !s.text).forEach((s) => console.warn(`시황 소스 제외 (${s.firm}): ${s.error}`));
+    usSourcesRaw.filter((s) => !s.text).forEach((s) => console.warn(`시황 소스 제외 (${s.firm}): ${s.error}`));
+    const krSources = onlySuccessful(krSourcesRaw);
+    const usSources = onlySuccessful(usSourcesRaw);
     if (krSources.length === 0) throw new Error("국내 시황 원문을 어느 채널에서도 가져오지 못했습니다.");
     if (usSources.length === 0) throw new Error("해외 시황 원문을 어느 채널에서도 가져오지 못했습니다.");
 
