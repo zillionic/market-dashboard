@@ -1632,83 +1632,101 @@ module.exports = async function handler(req, res) {
   // 별도 목록으로 관리할 필요가 없어졌습니다 — Claude 호출도 새 원문이 있을 때만
   // 발생해서 비용이 늘지 않습니다).
   try {
-    // 지수 종가 히스토리 누적과 매크로 캘린더는 아래 텔레그램/Claude 브리핑 단계와 무관하니
-    // 먼저 독립적으로 처리합니다. (예전엔 이 아래, 텔레그램 원문 fetch·summarize()보다 뒤에
-    // 있었는데, 텔레그램 스크레이핑이나 Claude 요약이 실패하면 그 실패가 여기까지 전파돼서
-    // 각자 try/catch로 감싸놨어도 아예 실행조차 안 되는 버그가 있었습니다 — 히스토리가 계속
-    // 안 쌓이던 원인.)
-    try {
-      const { kr, us } = await fetchIndexCloses();
-      await Promise.all([
-        appendIndexHistory("KOSPI", kr.asOfDate, kr.kospi?.close),
-        appendIndexHistory("KOSDAQ", kr.asOfDate, kr.kosdaq?.close),
-        appendIndexHistory("USDKRW", kr.asOfDate, kr.usdkrw?.close),
-        appendIndexHistory("SP500", us.asOfDate, us.sp500?.close),
-        appendIndexHistory("NASDAQ", us.asOfDate, us.nasdaq?.close),
-        appendIndexHistory("DOW", us.asOfDate, us.dow?.close),
-      ]);
-    } catch (err) {
-      console.warn("지수 히스토리 누적 실패, 이 부분만 건너뜁니다:", err);
-    }
-
-    try {
-      const events = await fetchMacroCalendar();
-      await redisSet("macro:calendar", events);
-    } catch (err) {
-      console.warn("매크로 캘린더 갱신 실패, 이 부분만 건너뜁니다:", err);
-    }
-
-    try {
-      const events = await fetchEarningsCalendar();
-      await redisSet("earnings:calendar", events);
-    } catch (err) {
-      console.warn("실적 캘린더 갱신 실패, 이 부분만 건너뜁니다:", err);
-    }
-
-    // 이 주의 공시 목록을 밖(notableDisclosuresThisWeek)에도 남겨둬서, 아래 노션용
-    // 공시 요약이 오늘자 데이터를 DART에서 또 한 번 가져오지 않고 재사용하게 합니다
-    // (예전엔 여기서 7일치를 가져오고, 노션 블록에서 오늘 하루치를 또 따로 가져와서
-    // 같은 날짜 데이터를 DART에 두 번 요청했습니다).
-    let notableDisclosuresThisWeek = [];
-    try {
-      notableDisclosuresThisWeek = await fetchDisclosuresCalendar();
-      await redisSet("disclosures:calendar", notableDisclosuresThisWeek);
-    } catch (err) {
-      console.warn("공시 캘린더 갱신 실패, 이 부분만 건너뜁니다:", err);
-    }
-
-    try {
-      const events = await fetchNewsCalendar();
-      await redisSet("news:calendar", events);
-    } catch (err) {
-      console.warn("뉴스 캘린더 갱신 실패, 이 부분만 건너뜁니다:", err);
-    }
-
-    // 채널 하나가 그날 실패해도(휴가, 형식 변경, 시황 형태 글 없음 등) 나머지
-    // 소스만으로 계속 진행됩니다. 국내·해외는 아래에서 완전히 독립적으로 처리합니다.
-    const [krSourcesRaw, usSourcesRaw] = await Promise.all([
-      fetchMarketSources(KR_TELEGRAM_CHANNELS, KR_RAW_KEYWORDS),
-      fetchMarketSources(US_TELEGRAM_CHANNELS, US_RAW_KEYWORDS),
+    // 서로 다른 데이터를 다루고 서로를 참조하지 않는 작업들은 전부 동시에 시작합니다.
+    // ⚠️ 예전엔 이 7개를 순차로 await해서, 각 단계가 자기 타임아웃 안에서 끝나도
+    // 전부 더하면 60초 함수 예산을 넘겨버리는 사고가 있었습니다(2026-08-18 재발 —
+    // 매크로 캘린더는 개별 타임아웃이 정상 작동했는데도, 그다음 순차 단계들에서
+    // 결국 함수 전체가 다시 FUNCTION_INVOCATION_TIMEOUT으로 죽음). Promise.allSettled로
+    // 동시에 시작하면 전체 소요 시간이 "합"이 아니라 "가장 느린 하나"로 결정됩니다.
+    const [
+      indexHistoryOutcome,
+      macroOutcome,
+      earningsOutcome,
+      disclosuresOutcome,
+      newsOutcome,
+      marketSourcesOutcome,
+      existingPayloadOutcome,
+    ] = await Promise.allSettled([
+      (async () => {
+        const { kr, us } = await fetchIndexCloses();
+        await Promise.all([
+          appendIndexHistory("KOSPI", kr.asOfDate, kr.kospi?.close),
+          appendIndexHistory("KOSDAQ", kr.asOfDate, kr.kosdaq?.close),
+          appendIndexHistory("USDKRW", kr.asOfDate, kr.usdkrw?.close),
+          appendIndexHistory("SP500", us.asOfDate, us.sp500?.close),
+          appendIndexHistory("NASDAQ", us.asOfDate, us.nasdaq?.close),
+          appendIndexHistory("DOW", us.asOfDate, us.dow?.close),
+        ]);
+      })(),
+      (async () => {
+        const events = await fetchMacroCalendar();
+        await redisSet("macro:calendar", events);
+      })(),
+      (async () => {
+        const events = await fetchEarningsCalendar();
+        await redisSet("earnings:calendar", events);
+      })(),
+      (async () => {
+        // 반환값(이 주의 공시 목록)은 아래 노션용 공시 요약이 오늘자 데이터를 DART에서
+        // 또 한 번 가져오지 않고 재사용하도록 남겨둡니다(같은 날짜 데이터 중복 요청 방지).
+        const notable = await fetchDisclosuresCalendar();
+        await redisSet("disclosures:calendar", notable);
+        return notable;
+      })(),
+      (async () => {
+        const events = await fetchNewsCalendar();
+        await redisSet("news:calendar", events);
+      })(),
+      // fetchMarketSources는 채널 하나가 그날 실패해도(휴가, 형식 변경, 시황 형태 글
+      // 없음 등) 내부적으로 이미 Promise.allSettled를 쓰므로 이 바깥 Promise는
+      // reject하지 않습니다. 국내·해외는 아래에서 완전히 독립적으로 처리합니다.
+      Promise.all([
+        fetchMarketSources(KR_TELEGRAM_CHANNELS, KR_RAW_KEYWORDS),
+        fetchMarketSources(US_TELEGRAM_CHANNELS, US_RAW_KEYWORDS),
+      ]),
+      // 한쪽 시장만 오늘 새 원문이 없어도(주말·공휴일 등) 그 쪽만 기존 저장값을 그대로
+      // 유지하고 나머지 쪽은 정상 갱신되도록, 기존 payload를 미리 읽어둡니다.
+      redisGet("briefing:latest"),
     ]);
+
+    if (indexHistoryOutcome.status === "rejected") console.warn("지수 히스토리 누적 실패, 이 부분만 건너뜁니다:", indexHistoryOutcome.reason);
+    if (macroOutcome.status === "rejected") console.warn("매크로 캘린더 갱신 실패, 이 부분만 건너뜁니다:", macroOutcome.reason);
+    if (earningsOutcome.status === "rejected") console.warn("실적 캘린더 갱신 실패, 이 부분만 건너뜁니다:", earningsOutcome.reason);
+
+    let notableDisclosuresThisWeek = [];
+    if (disclosuresOutcome.status === "rejected") {
+      console.warn("공시 캘린더 갱신 실패, 이 부분만 건너뜁니다:", disclosuresOutcome.reason);
+    } else {
+      notableDisclosuresThisWeek = disclosuresOutcome.value;
+    }
+
+    if (newsOutcome.status === "rejected") console.warn("뉴스 캘린더 갱신 실패, 이 부분만 건너뜁니다:", newsOutcome.reason);
+
+    let krSourcesRaw = [], usSourcesRaw = [];
+    if (marketSourcesOutcome.status === "rejected") {
+      console.warn("시황 원문 조회 실패, 이 부분만 건너뜁니다:", marketSourcesOutcome.reason);
+    } else {
+      [krSourcesRaw, usSourcesRaw] = marketSourcesOutcome.value;
+    }
     krSourcesRaw.filter((s) => !s.text).forEach((s) => console.warn(`시황 소스 제외 (${s.firm}): ${s.error}`));
     usSourcesRaw.filter((s) => !s.text).forEach((s) => console.warn(`시황 소스 제외 (${s.firm}): ${s.error}`));
     const krSources = onlySuccessful(krSourcesRaw);
     const usSources = onlySuccessful(usSourcesRaw);
 
-    // 한쪽 시장만 오늘 새 원문이 없어도(주말·공휴일 등) 그 쪽만 기존 저장값을 그대로
-    // 유지하고 나머지 쪽은 정상 갱신되도록, 먼저 기존 payload를 읽어둡니다.
     let existingPayload = null;
-    try {
-      existingPayload = await redisGet("briefing:latest");
-    } catch (err) {
-      console.warn("기존 briefing:latest 조회 실패(최초 실행이거나 일시적 오류일 수 있음):", err);
+    if (existingPayloadOutcome.status === "rejected") {
+      console.warn("기존 briefing:latest 조회 실패(최초 실행이거나 일시적 오류일 수 있음):", existingPayloadOutcome.reason);
+    } else {
+      existingPayload = existingPayloadOutcome.value;
     }
 
-    let krResult = existingPayload?.kr || null;
-    if (krSources.length === 0) {
-      console.warn("국내 시황 원문을 어느 채널에서도 가져오지 못했습니다 — 기존 값을 유지합니다.");
-    } else {
-      try {
+    // 국내·해외 시황 생성도 서로 독립적이라(각자 다른 소스·다른 Claude 호출) 동시에 진행합니다.
+    const [krOutcome, usOutcome] = await Promise.allSettled([
+      (async () => {
+        if (krSources.length === 0) {
+          console.warn("국내 시황 원문을 어느 채널에서도 가져오지 못했습니다 — 기존 값을 유지합니다.");
+          return existingPayload?.kr || null;
+        }
         const krBriefing = await summarize(krSources, "국내(코스피/코스닥)");
         // 업종별 이유는 별도 실패로 국내 시황 전체가 죽지 않도록 따로 try/catch 처리합니다.
         let krSectorReasons = existingPayload?.kr?.sectorReasons || [];
@@ -1719,21 +1737,17 @@ module.exports = async function handler(req, res) {
           console.warn("국내 업종별 이유 생성 실패, 기존 값을 유지합니다:", err);
         }
         const krFirms = krSources.map(s => s.firm).join("·");
-        krResult = {
+        return {
           briefing: krBriefing,
           briefingSource: `출처: ${krFirms}(국내 시황) · Claude 자동 종합`,
           sectorReasons: krSectorReasons,
         };
-      } catch (err) {
-        console.warn("국내 시황 생성 실패, 기존 값을 유지합니다:", err);
-      }
-    }
-
-    let usResult = existingPayload?.us || null;
-    if (usSources.length === 0) {
-      console.warn("해외 시황 원문을 어느 채널에서도 가져오지 못했습니다 — 기존 값을 유지합니다.");
-    } else {
-      try {
+      })(),
+      (async () => {
+        if (usSources.length === 0) {
+          console.warn("해외 시황 원문을 어느 채널에서도 가져오지 못했습니다 — 기존 값을 유지합니다.");
+          return existingPayload?.us || null;
+        }
         const usBriefing = await summarize(usSources, "해외(S&P500/나스닥/다우)");
         let usSectorsTop = existingPayload?.us?.sectorsTop || [];
         let usSectorsBottom = existingPayload?.us?.sectorsBottom || [];
@@ -1751,16 +1765,28 @@ module.exports = async function handler(req, res) {
           console.warn("해외 업종 데이터/이유 생성 실패, 기존 값을 유지합니다:", err);
         }
         const usFirms = usSources.map(s => s.firm).join("·");
-        usResult = {
+        return {
           briefing: usBriefing,
           briefingSource: `출처: ${usFirms}(해외 시황) · Claude 자동 종합`,
           sectorsTop: usSectorsTop,
           sectorsBottom: usSectorsBottom,
           sectorsSource: "출처: Yahoo Finance(S&P 500 GICS 섹터 지수) · Claude 자동 요약",
         };
-      } catch (err) {
-        console.warn("해외 시황 생성 실패, 기존 값을 유지합니다:", err);
-      }
+      })(),
+    ]);
+
+    let krResult = existingPayload?.kr || null;
+    if (krOutcome.status === "rejected") {
+      console.warn("국내 시황 생성 실패, 기존 값을 유지합니다:", krOutcome.reason);
+    } else {
+      krResult = krOutcome.value;
+    }
+
+    let usResult = existingPayload?.us || null;
+    if (usOutcome.status === "rejected") {
+      console.warn("해외 시황 생성 실패, 기존 값을 유지합니다:", usOutcome.reason);
+    } else {
+      usResult = usOutcome.value;
     }
 
     const payload = {
