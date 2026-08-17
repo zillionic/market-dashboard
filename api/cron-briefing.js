@@ -1090,14 +1090,19 @@ ${listText("US", usCandidates)}
     },
     body: JSON.stringify({
       model: "claude-sonnet-5",
-      max_tokens: 500,
+      // 후보가 국내만 60개를 넘기도 해서(다른 함수보다 입력이 훨씬 큼) 500으로는
+      // 답변이 중간에 잘려 텍스트 블록 자체를 못 받는 경우가 실제로 있었습니다.
+      max_tokens: 4096,
       messages: [{ role: "user", content: prompt }],
     }),
   });
   if (!res.ok) throw new Error(`Anthropic API 오류 (뉴스 선별, ${res.status}): ${await res.text().catch(() => "")}`);
   const json = await res.json();
   const textBlock = (json.content || []).find((c) => c.type === "text");
-  if (!textBlock) throw new Error("Claude 응답(뉴스 선별)에서 텍스트를 찾지 못했습니다.");
+  if (!textBlock) {
+    const blockTypes = (json.content || []).map((c) => c.type).join(",");
+    throw new Error(`Claude 응답(뉴스 선별)에서 텍스트를 찾지 못했습니다. stop_reason: ${json.stop_reason} | content 블록 타입: ${blockTypes}`);
+  }
   const cleaned = textBlock.text.trim().replace(/^```json\s*|^```\s*|```$/g, "");
   const picked = JSON.parse(cleaned); // { kr: ["KR-0", ...], us: ["US-1", ...] }
 
