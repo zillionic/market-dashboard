@@ -1367,6 +1367,10 @@
     let dragStartScrollTop = 0;
 
     el.addEventListener("pointerdown", (e) => {
+      // 뉴스 탭의 <a> 링크 위에서 시작한 클릭까지 setPointerCapture로 가로채면
+      // 브라우저의 기본 클릭(새 탭 열기)이 씹혀서 링크가 안 열리던 버그가 있었습니다
+      // — 링크 위에서는 드래그를 시작하지 않고 그대로 클릭이 통과되게 둡니다.
+      if (e.target.closest("a")) return;
       dragging = true;
       dragStartY = e.clientY;
       dragStartScrollTop = el.scrollTop;
