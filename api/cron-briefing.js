@@ -26,6 +26,11 @@
 //   DART_API_KEY                 - opendart.fss.or.kr 에서 무료 발급(개인, 즉시 이메일 발급)
 //                                 (없으면 노션 "개별 종목 및 이슈"의 공시 요약과 대시보드
 //                                  "공시" 탭 갱신만 조용히 건너뜁니다)
+//   NAVER_CLIENT_ID               - developers.naver.com/apps 에서 "검색" API로 무료 발급
+//   NAVER_CLIENT_SECRET            - 위와 동일한 곳에서 발급
+//                                 (둘 중 하나라도 없으면 대시보드 "뉴스" 탭의 국내 뉴스만
+//                                  조용히 건너뜁니다. FINNHUB_API_KEY 미설정 시 해외 뉴스도
+//                                  마찬가지로 건너뜁니다)
 //
 // 휴일 처리: 오늘이 한국 기준 토/일이면 아무 것도 안 하고 종료합니다.
 // Upstash에 저장된 값(가장 최근 평일 요약)이 그대로 유지되므로,
@@ -911,6 +916,195 @@ async function fetchDisclosuresCalendar() {
 }
 
 // ============================================================================
+// 뉴스 — 국내는 네이버 뉴스 검색 API(고정 매크로 키워드)로, 해외는 Finnhub 일반
+// 뉴스 피드로 후보를 모은 뒤, 둘 다 기계적으로 1차 필터링(최근 36시간·신뢰
+// 언론사(국내만)·중복 제거)하고 그 후보군에서 Claude가 "오늘 정말 시장에
+// 의미있는" 것만 최종 5개씩 골라줍니다(공시 파이프라인과 같은 철학 — 기계적
+// 필터가 노이즈를 줄이고, Claude는 이미 걸러진 후보 중 최종 판단만 합니다).
+// Claude는 후보 인덱스로만 선택하고 제목·링크·출처는 원문 그대로 씁니다(요약·
+// 재구성 없음 — 실제 기사로 링크가 걸리는 헤드라인이라 왜곡 위험을 없애는 게
+// 더 중요합니다).
+// ============================================================================
+const NAVER_CLIENT_ID = process.env.NAVER_CLIENT_ID;
+const NAVER_CLIENT_SECRET = process.env.NAVER_CLIENT_SECRET;
+
+// 임의 종목명 전수 검색은 노이즈만 늘어나므로, 시장 전반에 영향 있는 고정
+// 키워드로만 좁게 검색합니다. 더 넓히고 싶으면 이 배열에 키워드만 추가하세요.
+const NAVER_NEWS_QUERIES = ["코스피", "코스닥", "원달러 환율"];
+
+// 네이버 뉴스 검색은 "뉴스" 카테고리 전체가 대상이라 군소 매체·중복 송고 기사가
+// 섞여 나옵니다. 주요 통신사·경제지 도메인만 화이트리스트로 통과시킵니다.
+// (텔레그램 채널처럼, 새 도메인을 추가하면 ?debugNewsRaw=1로 실제 검색 결과에서
+// 매칭되는 기사가 있는지 먼저 확인해주세요.)
+const NEWS_TRUSTED_DOMAINS = [
+  { domain: "yna.co.kr", name: "연합뉴스" },
+  { domain: "hankyung.com", name: "한국경제" },
+  { domain: "mk.co.kr", name: "매일경제" },
+  { domain: "sedaily.com", name: "서울경제" },
+  { domain: "edaily.co.kr", name: "이데일리" },
+  { domain: "mt.co.kr", name: "머니투데이" },
+  { domain: "news1.kr", name: "뉴스1" },
+  { domain: "asiae.co.kr", name: "아시아경제" },
+  { domain: "fnnews.com", name: "파이낸셜뉴스" },
+  { domain: "newsis.com", name: "뉴시스" },
+  { domain: "biz.chosun.com", name: "조선비즈" },
+  { domain: "einfomax.co.kr", name: "연합인포맥스" },
+];
+
+const NEWS_LOOKBACK_HOURS = 36; // 하루 1번(아침) 크론이라 "오늘 0시부터"가 아니라 "최근 36시간"으로 봅니다.
+
+function hostnameOf(url) {
+  try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return ""; }
+}
+
+// 헤드라인 앞의 [속보]/[포토] 같은 태그·공백 차이만 다른 중복 기사를 걸러내기 위한 정규화.
+function normalizeNewsTitle(title) {
+  return title.replace(/^\[[^\]]*\]\s*/, "").replace(/\s+/g, "").toLowerCase();
+}
+
+function isWithinLookbackHours(date, hours) {
+  return Number.isFinite(date.getTime()) && (Date.now() - date.getTime()) <= hours * 3600 * 1000;
+}
+
+async function fetchNaverNews(query) {
+  const url = `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(query)}&display=100&sort=date`;
+  const res = await fetch(url, {
+    headers: {
+      "X-Naver-Client-Id": NAVER_CLIENT_ID,
+      "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
+    },
+  });
+  if (!res.ok) throw new Error(`네이버 뉴스 검색 실패 (${query}, ${res.status})`);
+  const json = await res.json();
+  return json.items || [];
+}
+
+async function fetchKrNewsCandidates() {
+  if (!NAVER_CLIENT_ID || !NAVER_CLIENT_SECRET) return [];
+  const settled = await Promise.allSettled(NAVER_NEWS_QUERIES.map(fetchNaverNews));
+  const items = settled.flatMap((r) => (r.status === "fulfilled" ? r.value : []));
+
+  const seen = new Set();
+  const candidates = [];
+  for (const it of items) {
+    const link = it.originallink || it.link;
+    const domain = hostnameOf(link);
+    const trusted = NEWS_TRUSTED_DOMAINS.find((t) => domain === t.domain || domain.endsWith(`.${t.domain}`));
+    if (!trusted) continue;
+    const pubDate = new Date(it.pubDate);
+    if (!isWithinLookbackHours(pubDate, NEWS_LOOKBACK_HOURS)) continue;
+    const title = stripHtml(it.title);
+    const key = normalizeNewsTitle(title);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    candidates.push({ title, source: trusted.name, link, pubDate: pubDate.toISOString() });
+  }
+  return candidates;
+}
+
+async function fetchFinnhubGeneralNews() {
+  const url = `https://finnhub.io/api/v1/news?category=general&token=${FINNHUB_API_KEY}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Finnhub 뉴스 조회 실패 (${res.status})`);
+  const json = await res.json();
+  return Array.isArray(json) ? json : [];
+}
+
+async function fetchUsNewsCandidates() {
+  if (!FINNHUB_API_KEY) return [];
+  const items = await fetchFinnhubGeneralNews();
+
+  const seen = new Set();
+  const candidates = [];
+  for (const it of items) {
+    if (!it.headline || !it.url || !Number.isFinite(it.datetime)) continue;
+    const pubDate = new Date(it.datetime * 1000);
+    if (!isWithinLookbackHours(pubDate, NEWS_LOOKBACK_HOURS)) continue;
+    const key = normalizeNewsTitle(it.headline);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    candidates.push({ title: it.headline, source: it.source || "", link: it.url, pubDate: pubDate.toISOString() });
+  }
+  return candidates;
+}
+
+// 1차 필터를 통과한 후보(보통 국내·해외 각 수십 건 이내)를 Claude에 인덱스와 함께
+// 보내서, 정말 중요한 것만 최종 5개씩 고르게 합니다. Claude는 제목을 다시 쓰지
+// 않고 인덱스만 골라서 돌려주므로, 실제 기사 링크·제목·출처는 항상 원문 그대로
+// 유지됩니다.
+async function generateNewsSelections(krCandidates, usCandidates) {
+  if (krCandidates.length === 0 && usCandidates.length === 0) return { kr: [], us: [] };
+
+  const listText = (label, list) => list.length
+    ? list.map((c, i) => `${label}-${i}: [${c.source}] ${c.title}`).join("\n")
+    : "(후보 없음)";
+
+  const prompt = `다음은 최근 신뢰 가능한 언론사 위주로 1차 필터링한 국내·해외 뉴스 헤드라인 후보입니다.
+
+[국내 후보]
+${listText("KR", krCandidates)}
+
+[해외 후보]
+${listText("US", usCandidates)}
+
+이 중에서 실제로 시장에 영향을 줄 만큼 중요한 것만 국내·해외 각각 최대 5개씩 골라주세요. 같은 사안을 다루는 중복·유사 기사는 하나만, 단순 통계 재탕이나 시장과 무관한 사건은 제외하세요. 후보 인덱스(예: "KR-0")로만 답하고, 전부 사소하면 해당 배열은 비워도 됩니다.
+
+아래 JSON 형식으로만 출력하세요 (다른 설명, 마크다운 코드블록 없이):
+{"kr": ["KR-0", "KR-3", ...], "us": ["US-1", ...]}`;
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": process.env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-5",
+      max_tokens: 500,
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+  if (!res.ok) throw new Error(`Anthropic API 오류 (뉴스 선별, ${res.status}): ${await res.text().catch(() => "")}`);
+  const json = await res.json();
+  const textBlock = (json.content || []).find((c) => c.type === "text");
+  if (!textBlock) throw new Error("Claude 응답(뉴스 선별)에서 텍스트를 찾지 못했습니다.");
+  const cleaned = textBlock.text.trim().replace(/^```json\s*|^```\s*|```$/g, "");
+  const picked = JSON.parse(cleaned); // { kr: ["KR-0", ...], us: ["US-1", ...] }
+
+  const pickByIndex = (label, list, ids) => (ids || [])
+    .map((id) => {
+      const m = id.match(new RegExp(`^${label}-(\\d+)$`));
+      return m ? list[Number(m[1])] : null;
+    })
+    .filter(Boolean);
+
+  return {
+    kr: pickByIndex("KR", krCandidates, picked.kr),
+    us: pickByIndex("US", usCandidates, picked.us),
+  };
+}
+
+// 대시보드 "뉴스" 탭용 — 국내·해외 각 최종 선별 결과를 하나의 목록으로 합쳐 반환합니다.
+async function fetchNewsCalendar() {
+  const [krCandidates, usCandidates] = await Promise.all([
+    fetchKrNewsCandidates(),
+    fetchUsNewsCandidates(),
+  ]);
+  const { kr, us } = await generateNewsSelections(krCandidates, usCandidates);
+  const toEvent = (market) => (c) => ({
+    date: c.pubDate.slice(0, 10),
+    title: c.title,
+    source: c.source,
+    link: c.link,
+    market,
+  });
+  const events = [...kr.map(toEvent("KR")), ...us.map(toEvent("US"))];
+  events.sort((a, b) => b.date.localeCompare(a.date));
+  return events;
+}
+
+// ============================================================================
 // Notion 연동 — 매일 "시장" / "개별 종목 및 이슈" 항목을 노션 페이지 맨 위에 추가
 // ============================================================================
 const NOTION_API_KEY = process.env.NOTION_API_KEY;
@@ -1337,6 +1531,42 @@ module.exports = async function handler(req, res) {
     return;
   }
 
+  // 진단용: ?debugNewsRaw=1 로 호출하면 네이버/Finnhub에서 가져와 기계적 1차 필터(신뢰
+  // 언론사·최근 36시간·중복 제거)까지만 거친 후보 목록을 확인합니다 (Claude 호출 없음,
+  // 비용 없음). 화이트리스트 도메인·검색어를 튜닝할 때 Claude 비용 없이 반복 확인하는 용도입니다.
+  if (req.query.debugNewsRaw) {
+    try {
+      const [kr, us] = await Promise.all([fetchKrNewsCandidates(), fetchUsNewsCandidates()]);
+      res.status(200).json({
+        hasNaverKey: !!(NAVER_CLIENT_ID && NAVER_CLIENT_SECRET),
+        hasFinnhubKey: !!FINNHUB_API_KEY,
+        kr, us,
+      });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+    return;
+  }
+
+  // 진단용: ?debugNews=1 로 호출하면 1차 필터 + Claude 최종 선별까지 전체 파이프라인을
+  // 확인합니다 (Claude 호출 발생, 비용 있음 — 인증 필요). ?debugNews=1&save=1 을 붙이면
+  // 대시보드가 실제로 읽는 캐시(news:calendar)에도 그 자리에서 바로 저장합니다.
+  if (req.query.debugNews) {
+    if (!requireCronSecret(req, res)) return;
+    try {
+      const events = await fetchNewsCalendar();
+      let saved = false;
+      if (req.query.save) {
+        await redisSet("news:calendar", events);
+        saved = true;
+      }
+      res.status(200).json({ saved, events });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+    return;
+  }
+
   // Vercel Cron 검증 (CRON_SECRET을 설정한 경우에만 강제)
   const auth = req.headers.authorization;
   if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -1388,6 +1618,13 @@ module.exports = async function handler(req, res) {
       await redisSet("disclosures:calendar", events);
     } catch (err) {
       console.warn("공시 캘린더 갱신 실패, 이 부분만 건너뜁니다:", err);
+    }
+
+    try {
+      const events = await fetchNewsCalendar();
+      await redisSet("news:calendar", events);
+    } catch (err) {
+      console.warn("뉴스 캘린더 갱신 실패, 이 부분만 건너뜁니다:", err);
     }
 
     // 채널 하나가 그날 실패해도(휴가, 형식 변경, 시황 형태 글 없음 등) 나머지
