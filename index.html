@@ -245,16 +245,16 @@
   .cal-tab.active{ border-color: var(--gold); color: var(--gold); background: rgba(var(--gold-rgb),0.1); }
   .cal-tab.active .chev{ transform: rotate(180deg); }
   /* 탭이 3개 이상이면 "이번 주 " 접두어까지 넣었을 때 좁은 화면에서 단어 중간에
-     줄바꿈되므로, 그 폭에서는 접두어를 빼고 "매크로"/"실적"/"공시"/"뉴스"만 보여줍니다. */
+     줄바꿈되므로, 그 폭에서는 접두어를 빼고 "매크로"/"실적"/"공시"/"뉴스"만 보여줍니다.
+     (한때 탭을 내용 폭만큼만 차지하게 하고 가로 스크롤시키는 방식도 써봤는데,
+     "매크로"만 유독 넓어 보이고 탭 4개가 한쪽으로 쏠려 보이는 문제가 있어서,
+     대신 패딩·글자 크기를 좁혀 4개 모두 균등폭(flex:1)을 유지한 채 한 줄에
+     들어가게 했습니다.) */
   @media (max-width: 480px){
     .cal-tab .tab-prefix{ display:none; }
-  }
-  /* 탭이 4개가 되니(뉴스 추가) 접두어를 빼도 "매크로"(3글자)가 flex:1 균등폭에서
-     중간에 줄바꿈되는 경우가 있어서, 좁은 화면에서는 탭을 내용 폭만큼만 차지하게
-     하고 다 안 들어가면 가로 스크롤되게 합니다(흔한 모바일 탭바 패턴). */
-  @media (max-width: 480px){
-    .cal-tabs{ overflow-x: auto; }
-    .cal-tab{ flex: 0 0 auto; white-space: nowrap; }
+    .cal-tabs{ gap: 4px; }
+    .cal-tab{ padding: 7px 2px; font-size: 11.5px; gap: 3px; }
+    .cal-tab .chev{ font-size: 8px; }
   }
   .cal-panel{ display:none; }
   .cal-panel.active{ display:block; margin-top:14px; }
@@ -488,10 +488,18 @@
       <span class="eyebrow">Calendar</span>
     </div>
     <div class="cal-tabs">
+      <div class="cal-tab" data-cal-panel="news" onclick="selectCalTab('news')">뉴스 <span class="chev">▾</span></div>
+      <div class="cal-tab" data-cal-panel="disclosures" onclick="selectCalTab('disclosures')"><span class="tab-prefix">이번 주 </span>공시 <span class="chev">▾</span></div>
       <div class="cal-tab" data-cal-panel="macro" onclick="selectCalTab('macro')"><span class="tab-prefix">이번 주 </span>매크로 <span class="chev">▾</span></div>
       <div class="cal-tab" data-cal-panel="earnings" onclick="selectCalTab('earnings')"><span class="tab-prefix">이번 주 </span>실적 <span class="chev">▾</span></div>
-      <div class="cal-tab" data-cal-panel="disclosures" onclick="selectCalTab('disclosures')"><span class="tab-prefix">이번 주 </span>공시 <span class="chev">▾</span></div>
-      <div class="cal-tab" data-cal-panel="news" onclick="selectCalTab('news')">뉴스 <span class="chev">▾</span></div>
+    </div>
+
+    <div class="cal-panel" data-cal-panel="news">
+      <div class="macro-cal-list" id="newsCalList"></div>
+    </div>
+
+    <div class="cal-panel" data-cal-panel="disclosures">
+      <div class="macro-cal-list" id="disclosuresCalList"></div>
     </div>
 
     <div class="cal-panel" data-cal-panel="macro">
@@ -507,14 +515,6 @@
         <span class="h-eps">EPS</span>
       </div>
       <div class="earn-list" id="earningsCalList"></div>
-    </div>
-
-    <div class="cal-panel" data-cal-panel="disclosures">
-      <div class="macro-cal-list" id="disclosuresCalList"></div>
-    </div>
-
-    <div class="cal-panel" data-cal-panel="news">
-      <div class="macro-cal-list" id="newsCalList"></div>
     </div>
   </section>
 
