@@ -21,6 +21,8 @@
 //                                 (없으면 매크로 캘린더 갱신만 조용히 건너뜁니다)
 //   FINNHUB_API_KEY              - finnhub.io/register 에서 무료 발급 (개인용, 분당 60콜)
 //                                 (없으면 실적 캘린더 갱신만 조용히 건너뜁니다)
+//   DART_API_KEY                 - opendart.fss.or.kr 에서 무료 발급(개인, 즉시 이메일 발급)
+//                                 (없으면 노션 "개별 종목 및 이슈"의 공시 요약만 조용히 건너뜁니다)
 //
 // 휴일 처리: 오늘이 한국 기준 토/일이면 아무 것도 안 하고 종료합니다.
 // Upstash에 저장된 값(가장 최근 평일 요약)이 그대로 유지되므로,
@@ -706,6 +708,125 @@ async function fetchUsSectorIndices() {
 }
 
 // ============================================================================
+// 개별 종목 공시 요약 — DART(전자공시, opendart.fss.or.kr) 오픈 API로 그날 전체
+// 시장 공시를 가져온 뒤, "시장에 영향 줄 만한 유형"만 기계적으로 1차 필터링하고
+// 그 소수만 Claude로 최종 선별·한 줄 요약합니다.
+//
+// list.json 응답엔 공시유형 코드(pblntf_ty/pblntf_detail_ty)가 유상증자·자기주식·
+// 합병 등을 전부 "B001 주요사항보고서" 하나로 뭉뚱그려서 줘서 코드만으로는 세부
+// 구분이 안 됩니다 — 보고서 제목(report_nm) 키워드 매칭으로 구분합니다(공개된
+// DART API 래퍼들도 공통적으로 쓰는 방식). 계약금액 등 숫자 데이터는 이 API에
+// 아예 없어서(별도의 회사별 전용 API가 필요) 이번 버전에서는 제외했습니다.
+// ============================================================================
+const DART_API_KEY = process.env.DART_API_KEY;
+const DART_LIST_ENDPOINT = "https://opendart.fss.or.kr/api/list.json";
+
+// [라벨, 제목에 포함되면 "주목할 만함"으로 보는 정규식]. 새 유형을 더 잡고 싶으면
+// 한 줄만 추가하면 됩니다.
+const DART_NOTABLE_PATTERNS = [
+  { label: "유상증자", pattern: /유상증자/ },
+  { label: "무상증자", pattern: /무상증자/ },
+  { label: "자기주식 취득", pattern: /자기주식.*취득/ },
+  { label: "자기주식 처분", pattern: /자기주식.*처분/ },
+  { label: "전환사채 발행", pattern: /전환사채/ },
+  { label: "신주인수권부사채 발행", pattern: /신주인수권부사채/ },
+  { label: "교환사채 발행", pattern: /교환사채/ },
+  { label: "회사분할", pattern: /회사분할/ },
+  { label: "회사합병", pattern: /회사합병|합병\s*결정/ },
+  { label: "주식교환·이전", pattern: /주식교환|주식이전/ },
+  { label: "영업양수도", pattern: /영업양수|영업양도/ },
+  { label: "자산양수도", pattern: /자산양수|자산양도/ },
+  { label: "타법인 지분 양수도", pattern: /타법인.*(양수|양도)/ },
+  { label: "공급계약체결", pattern: /단일판매.*공급계약|공급계약체결/ },
+  { label: "잠정실적", pattern: /잠정실적/ },
+  { label: "손익구조 변경", pattern: /매출액.*변경|손익구조.*변경/ },
+  { label: "부도·영업정지·회생절차", pattern: /부도발생|영업정지|회생절차|해산사유/ },
+  { label: "소송", pattern: /소송/ },
+  { label: "해외상장·상장폐지", pattern: /해외증권시장상장/ },
+];
+
+// [기재정정]/[첨부정정] 등은 원본 공시와 같은 사안에 대한 후속 정정일 뿐이라,
+// 걸러내지 않으면 하나의 사건이 Claude 요약에 중복으로 들어갈 수 있습니다.
+const DART_AMENDMENT_TITLE_PATTERN = /^\[(기재정정|첨부정정|첨부추가|정정신고)\]/;
+
+async function fetchDartDisclosuresRaw(dateStr) {
+  let rows = [];
+  for (let page = 1; page <= 20; page++) {
+    const url = `${DART_LIST_ENDPOINT}?crtfc_key=${DART_API_KEY}&bgn_de=${dateStr}&end_de=${dateStr}&page_no=${page}&page_count=100`;
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`DART API 오류 (${res.status})`);
+    const json = await res.json();
+    if (json.status === "013") break; // 그날 공시 없음(정상)
+    if (json.status !== "000") throw new Error(`DART API 오류 (status ${json.status}): ${json.message || ""}`);
+    const list = Array.isArray(json.list) ? json.list : json.list ? [json.list] : [];
+    rows = rows.concat(list);
+    const totalPage = Number(json.total_page) || 1;
+    if (page >= totalPage) break;
+  }
+  return rows;
+}
+
+// 기계적 1차 필터: 화이트리스트 유형만, 정정공시 제외, 같은 회사+같은 유형 하루 1건만.
+function filterNotableDisclosures(rows) {
+  const seen = new Set();
+  const result = [];
+  for (const r of rows) {
+    const title = (r.report_nm || "").trim();
+    if (!title || DART_AMENDMENT_TITLE_PATTERN.test(title)) continue;
+    const hit = DART_NOTABLE_PATTERNS.find((p) => p.pattern.test(title));
+    if (!hit) continue;
+    const dedupeKey = `${r.corp_code}|${hit.label}`;
+    if (seen.has(dedupeKey)) continue;
+    seen.add(dedupeKey);
+    result.push({ corpName: r.corp_name, corpCode: r.corp_code, title, type: hit.label, rceptNo: r.rcept_no });
+  }
+  return result;
+}
+
+// 1차 필터를 통과한(보통 하루 수 건 수준) 후보만 Claude에 보내서, 그 중에서도 정말
+// 중요한 것만 최종 선별하고 기존 "개별 종목 및 이슈" 스타일 한 줄로 요약합니다.
+async function generateDisclosureSummaries(disclosures) {
+  if (disclosures.length === 0) return [];
+
+  const listText = disclosures.map((d) => `- [${d.type}] ${d.corpName}: ${d.title}`).join("\n");
+  const prompt = `다음은 오늘 한국 상장기업들이 전자공시(DART)에 제출한 공시 중, 시장에 영향을 줄 수 있는 유형만 기계적으로 1차 필터링한 후보 목록입니다.
+
+${listText}
+
+이 중에서 실제로 시장/주가에 영향을 줄 만큼 중요한 것만 골라 개조식(명사형 종결)으로 한 줄 요약해주세요. 제목만으로 판단이 애매하면 회사명·유형을 참고해 합리적으로 판단하되, 절차적이거나 사소해 보이는 건 제외하세요. 최대 5개까지만 고르세요(전부 사소하면 빈 배열을 반환하세요).
+
+아래 JSON 배열 형식으로만 출력하세요 (다른 설명, 마크다운 코드블록 없이):
+[{"corpName":"회사명","summary":"한 줄 요약"}, ...]`;
+
+  const res = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-api-key": process.env.ANTHROPIC_API_KEY,
+      "anthropic-version": "2023-06-01",
+    },
+    body: JSON.stringify({
+      model: "claude-sonnet-5",
+      max_tokens: 800,
+      messages: [{ role: "user", content: prompt }],
+    }),
+  });
+  if (!res.ok) throw new Error(`Anthropic API 오류 (공시 요약, ${res.status}): ${await res.text().catch(() => "")}`);
+  const json = await res.json();
+  const textBlock = (json.content || []).find((c) => c.type === "text");
+  if (!textBlock) throw new Error("Claude 응답(공시 요약)에서 텍스트를 찾지 못했습니다.");
+  const cleaned = textBlock.text.trim().replace(/^```json\s*|^```\s*|```$/g, "");
+  return JSON.parse(cleaned);
+}
+
+async function fetchAndSummarizeDisclosures(dateStr) {
+  if (!DART_API_KEY) return [];
+  const rawRows = await fetchDartDisclosuresRaw(dateStr);
+  const notable = filterNotableDisclosures(rawRows);
+  return generateDisclosureSummaries(notable);
+}
+
+// ============================================================================
 // Notion 연동 — 매일 "시장" / "개별 종목 및 이슈" 항목을 노션 페이지 맨 위에 추가
 // ============================================================================
 const NOTION_API_KEY = process.env.NOTION_API_KEY;
@@ -880,7 +1001,7 @@ function todayKSTCompact() {
   return kst.replace(/-/g, "");
 }
 
-async function postToNotion(krRaw, usRaw) {
+async function postToNotion(krRaw, usRaw, disclosureSummaries) {
   const [marketSection, stockNews] = await Promise.all([
     generateMarketSection(krRaw, usRaw),
     generateStockNewsSection(krRaw, usRaw),
@@ -888,7 +1009,16 @@ async function postToNotion(krRaw, usRaw) {
 
   const krBullets = (marketSection.kr || []).map(bullet);
   const usBullets = (marketSection.us || []).map(bullet);
-  const stockBullets = stockNews.length ? stockNews.map(bullet) : [bullet("(오늘은 원문에서 종목별 이슈를 찾지 못했습니다)")];
+
+  // 텔레그램 원문 기반 종목 뉴스에 DART 공시 요약을 더하되, 이미 같은 회사가
+  // 텔레그램 쪽에서 언급됐으면 중복으로 추가하지 않습니다.
+  const mentionedText = stockNews.join(" ");
+  const dartOnly = (disclosureSummaries || []).filter((d) => !mentionedText.includes(d.corpName));
+  const combinedStockNews = [
+    ...stockNews,
+    ...dartOnly.map((d) => `${d.corpName}, ${d.summary} (공시)`),
+  ];
+  const stockBullets = combinedStockNews.length ? combinedStockNews.map(bullet) : [bullet("(오늘은 원문에서 종목별 이슈를 찾지 못했습니다)")];
 
   const children = [
     heading2(todayKSTCompact()),
@@ -1065,6 +1195,35 @@ module.exports = async function handler(req, res) {
     return;
   }
 
+  // 진단용: ?debugDartRaw=1 로 호출하면 오늘 DART 공시 중 1차 필터를 통과한 후보 목록만
+  // 확인합니다 (Claude 호출 없음, 비용 없음, 저장도 안 함). 화이트리스트 정규식을
+  // 튜닝할 때 Claude 비용 없이 반복 확인하는 용도입니다.
+  if (req.query.debugDartRaw) {
+    try {
+      const dateStr = req.query.date || todayKSTCompact();
+      const rawRows = await fetchDartDisclosuresRaw(dateStr);
+      const notable = filterNotableDisclosures(rawRows);
+      res.status(200).json({ hasApiKey: !!DART_API_KEY, date: dateStr, rawCount: rawRows.length, notable });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+    return;
+  }
+
+  // 진단용: ?debugDart=1 로 호출하면 1차 필터 + Claude 최종 선별·요약까지 전체 파이프라인을
+  // 확인합니다 (Claude 호출 발생, 비용 있음 — 인증 필요. 노션에는 쓰지 않습니다).
+  if (req.query.debugDart) {
+    if (!requireCronSecret(req, res)) return;
+    try {
+      const dateStr = req.query.date || todayKSTCompact();
+      const summaries = await fetchAndSummarizeDisclosures(dateStr);
+      res.status(200).json({ hasApiKey: !!DART_API_KEY, date: dateStr, summaries });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+    return;
+  }
+
   // Vercel Cron 검증 (CRON_SECRET을 설정한 경우에만 강제)
   const auth = req.headers.authorization;
   if (process.env.CRON_SECRET && auth !== `Bearer ${process.env.CRON_SECRET}`) {
@@ -1166,7 +1325,13 @@ module.exports = async function handler(req, res) {
     let notionResult = { skipped: true, reason: "NOTION_API_KEY/NOTION_PAGE_ID/NOTION_ANCHOR_BLOCK_ID 미설정" };
     if (NOTION_API_KEY && NOTION_PAGE_ID && NOTION_ANCHOR_BLOCK_ID) {
       try {
-        await postToNotion(krRaw, usRaw);
+        let disclosureSummaries = [];
+        try {
+          disclosureSummaries = await fetchAndSummarizeDisclosures(todayKSTCompact());
+        } catch (err) {
+          console.warn("공시 요약 생성 실패, 이 부분만 건너뜁니다:", err);
+        }
+        await postToNotion(krRaw, usRaw, disclosureSummaries);
         notionResult = { ok: true };
       } catch (err) {
         console.warn("Notion 업데이트 실패:", err);
