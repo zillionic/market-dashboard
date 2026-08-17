@@ -229,6 +229,11 @@
   .cal-tab:hover{ border-color: var(--gold); }
   .cal-tab.active{ border-color: var(--gold); color: var(--gold); background: rgba(var(--gold-rgb),0.1); }
   .cal-tab.active .chev{ transform: rotate(180deg); }
+  /* 탭이 3개 이상이면 "이번 주 " 접두어까지 넣었을 때 좁은 화면에서 단어 중간에
+     줄바꿈되므로, 그 폭에서는 접두어를 빼고 "매크로"/"실적"/"공시"만 보여줍니다. */
+  @media (max-width: 480px){
+    .cal-tab .tab-prefix{ display:none; }
+  }
   .cal-panel{ display:none; }
   .cal-panel.active{ display:block; margin-top:14px; }
 
@@ -460,8 +465,9 @@
       <span class="eyebrow">Calendar</span>
     </div>
     <div class="cal-tabs">
-      <div class="cal-tab" data-cal-panel="macro" onclick="selectCalTab('macro')">이번 주 매크로 <span class="chev">▾</span></div>
-      <div class="cal-tab" data-cal-panel="earnings" onclick="selectCalTab('earnings')">이번 주 실적 <span class="chev">▾</span></div>
+      <div class="cal-tab" data-cal-panel="macro" onclick="selectCalTab('macro')"><span class="tab-prefix">이번 주 </span>매크로 <span class="chev">▾</span></div>
+      <div class="cal-tab" data-cal-panel="earnings" onclick="selectCalTab('earnings')"><span class="tab-prefix">이번 주 </span>실적 <span class="chev">▾</span></div>
+      <div class="cal-tab" data-cal-panel="disclosures" onclick="selectCalTab('disclosures')"><span class="tab-prefix">이번 주 </span>공시 <span class="chev">▾</span></div>
     </div>
 
     <div class="cal-panel" data-cal-panel="macro">
@@ -477,6 +483,10 @@
         <span class="h-eps">EPS</span>
       </div>
       <div class="earn-list" id="earningsCalList"></div>
+    </div>
+
+    <div class="cal-panel" data-cal-panel="disclosures">
+      <div class="macro-cal-list" id="disclosuresCalList"></div>
     </div>
   </section>
 
@@ -631,6 +641,8 @@
     macroCalendar: [],
     // cron-briefing.js가 Finnhub·S&P 500 구성종목에서 매일 가져와 쌓아둔 값으로 fetchLiveData()가 채웁니다.
     earningsCalendar: [],
+    // cron-briefing.js가 DART에서 매일 가져와 기계적으로 필터링해 쌓아둔 값으로 fetchLiveData()가 채웁니다.
+    disclosuresCalendar: [],
     // /api/briefing의 generatedAt — 크론이 마지막으로 "성공적으로" 실행된 시각 (실패 감지용).
     lastCronRun: null,
     ticker: [
@@ -719,8 +731,12 @@
   const BRIEFING_API = "/api/briefing";
   const KR_SECTOR_REASONS_API = "/api/kr-sector-reasons";
   const HISTORY_API = "/api/history";
-  const MACRO_CALENDAR_API = "/api/macro-calendar";
-  const EARNINGS_CALENDAR_API = "/api/earnings-calendar";
+  // macro-calendar.js/earnings-calendar.js/disclosures-calendar.js가 각각 따로
+  // 있었는데, Vercel Hobby 플랜의 서버리스 함수 12개 제한에 걸려서 api/calendar.js
+  // 하나로 합쳤습니다(?type=으로 구분).
+  const MACRO_CALENDAR_API = "/api/calendar?type=macro";
+  const EARNINGS_CALENDAR_API = "/api/calendar?type=earnings";
+  const DISCLOSURES_CALENDAR_API = "/api/calendar?type=disclosures";
   const EXTRA_TICKERS_API = "/api/extra-tickers";
   const TREASURY_YIELDS_API = "/api/treasury-yields";
 
@@ -1040,6 +1056,22 @@
     if (Array.isArray(j.events)) DATA.earningsCalendar = j.events;
   }
 
+  // ---- [공시 캘린더] cron이 DART에서 매일 가져와 기계적으로 필터링해 쌓아둔 최근 1주일 국내 주요 공시를 읽어옵니다 ----
+  async function fetchDisclosuresRaw(){
+    try {
+      const res = await fetch(DISCLOSURES_CALENDAR_API, { cache: "no-store" });
+      if (!res.ok) { console.warn("disclosures-calendar API 응답 실패:", res.status); return null; }
+      return await res.json();
+    } catch (err) {
+      console.warn("공시 캘린더 실시간 연동 실패:", err);
+      return null;
+    }
+  }
+  function applyDisclosures(j){
+    if(!j) return;
+    if (Array.isArray(j.events)) DATA.disclosuresCalendar = j.events;
+  }
+
   // ---- [해외 업종 등락률] Finviz — 공식 무료 API는 없음(Elite 구독형, finviz.com/elite). ----
   // 브라우저에서 finviz.com/groups?g=sector&v=140 를 매일 열어서 옮기는 게 현재 방식.
   // 자동화하려면 완전 무료 대안으로 섹터 ETF(XLB·XLK·XLRE·XLI·XLV·XLY·XLU·XLF·XLP·XLC·XLE) 일별 종가를
@@ -1122,7 +1154,7 @@
   // 각 fetch*Raw()는 실패 시 null을 반환합니다(콘솔 경고만 남기고 이전 값 유지).
   // 여기서 실패한 항목 이름을 모아뒀다가 상단에 옅은 경고로 보여줘서, "화면은 그대로인데
   // 사실 최신값이 아닌" 상태를 사용자가 알아챌 수 있게 합니다.
-  const LIVE_FETCH_LABELS = ["국내 지수·업종", "국내 등락 비율", "해외 지수", "국내 지수·환율", "시황 코멘트", "추이 차트", "매크로 캘린더", "원자재·VIX", "국채 금리", "실적 캘린더"];
+  const LIVE_FETCH_LABELS = ["국내 지수·업종", "국내 등락 비율", "해외 지수", "국내 지수·환율", "시황 코멘트", "추이 차트", "매크로 캘린더", "원자재·VIX", "국채 금리", "실적 캘린더", "공시 캘린더"];
 
   function renderLiveDataWarn(failedLabels){
     const el = document.getElementById("liveDataWarn");
@@ -1144,8 +1176,9 @@
       fetchExtraTickersRaw(),
       fetchTreasuryYieldsRaw(),
       fetchEarningsRaw(),
+      fetchDisclosuresRaw(),
     ]);
-    const [krMarketResult, breadthJson, usIndicesJson, krIndicesJson, briefingJson, historyJson, macroJson, extraTickersJson, treasuryYieldsJson, earningsJson] = results;
+    const [krMarketResult, breadthJson, usIndicesJson, krIndicesJson, briefingJson, historyJson, macroJson, extraTickersJson, treasuryYieldsJson, earningsJson, disclosuresJson] = results;
     const failedLabels = LIVE_FETCH_LABELS.filter((_, i) => results[i] === null);
 
     const { krBasDd } = applyKrMarket(krMarketResult);
@@ -1159,6 +1192,7 @@
     applyHistory(historyJson);
     applyMacro(macroJson);
     applyEarnings(earningsJson);
+    applyDisclosures(disclosuresJson);
 
     const sectorReasonsOk = await fetchAndApplyKrSectorReasons();
     if (!sectorReasonsOk) failedLabels.push("업종 상세 사유");
@@ -1358,6 +1392,25 @@
           <span class="sector">${e.sector || ""}</span>
           <span class="mcap">${mcapStr || ""}</span>
           <span class="eps">${epsHtml}</span>
+        </div>
+      `;
+    }).join("");
+  }
+
+  function renderDisclosuresCalendar(events){
+    const el = document.getElementById("disclosuresCalList");
+    if(!el) return;
+    if(!Array.isArray(events) || events.length === 0){
+      el.innerHTML = `<div class="macro-cal-empty">최근 1주일간 주요 공시가 없습니다.</div>`;
+      return;
+    }
+    el.innerHTML = events.map(e => {
+      const iso = `${e.date.slice(0,4)}-${e.date.slice(4,6)}-${e.date.slice(6,8)}`;
+      return `
+        <div class="macro-cal-item">
+          <span class="date mono">${formatShortKoreanDate(iso)}</span>
+          <span class="name">${e.corpName}</span>
+          <span class="value"><span class="period mono">${e.type}</span></span>
         </div>
       `;
     }).join("");
@@ -1625,6 +1678,7 @@
     renderTicker();
     renderMacroCalendar(DATA.macroCalendar);
     renderEarningsCalendar(DATA.earningsCalendar);
+    renderDisclosuresCalendar(DATA.disclosuresCalendar);
 
     renderIndexRow("kr-index-row", DATA.kr.indices, "kr");
     updateTrendChart("kr");
