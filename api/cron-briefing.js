@@ -34,16 +34,16 @@
 //                                 탭의 국내 뉴스만 조용히 건너뜁니다. FINNHUB_API_KEY
 //                                 미설정 시 해외 뉴스도 마찬가지로 건너뜁니다)
 //
-// 휴일 처리: 오늘이 한국 기준 토/일이면 아무 것도 안 하고 종료합니다.
-// Upstash에 저장된 값(가장 최근 평일 요약)이 그대로 유지되므로,
-// 대시보드에는 자동으로 "최근 거래일 기준" 시황이 계속 표시됩니다.
+// 휴일 처리: 요일과 무관하게 매일 시도하되, 국내·해외 각각 그날 텔레그램
+// 채널에서 실제로 새 원문을 찾았는지로 독립 판단합니다. 못 찾으면(주말·공휴일
+// 등) 그 시장만 Upstash에 저장된 기존 값을 그대로 유지하고, 다른 시장은
+// 정상 갱신됩니다 — 국내 공휴일에 미국 시황·지수까지 같이 멈추던 문제를
+// 막기 위한 설계입니다(옛날엔 "국내 기준 주말/공휴일이면 전체 스킵"하는
+// 단일 게이트가 있었는데, 미국은 정상 개장한 날에도 같이 멈춰서 없앴습니다).
 // -----------------------------------------------------------------------------
 
 const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
 const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
-
-// TODO: 한국 공휴일까지 건너뛰려면 'YYYY-MM-DD' 형식으로 날짜를 추가하세요.
-const KR_HOLIDAYS = [];
 
 async function redisSet(key, valueObj) {
   const res = await fetch(`${UPSTASH_URL}/set/${encodeURIComponent(key)}`, {
@@ -188,7 +188,7 @@ function nyDateStr(offsetDays = 0) {
 
 // 매크로/실적 캘린더 둘 다 "지난 영업일부터" 보여주기 위한 기준일 계산입니다. 어제가
 // 토/일이면(월요일에 조회하는 경우 등) 계속 거슬러 올라가서 가장 최근 평일(금요일)을 찾습니다.
-// TODO: 공휴일까지 건너뛰려면 KR_HOLIDAYS처럼 날짜 목록을 추가해서 같이 걸러주세요.
+// TODO: 미국 공휴일까지 건너뛰려면 날짜 목록을 만들어서 같이 걸러주세요.
 function previousBusinessDayStr() {
   for (let offset = -1; offset >= -3; offset--) {
     const d = new Date();
@@ -577,16 +577,6 @@ ${formatSourcesBlock(sources)}
   const textBlock = (json.content || []).find((c) => c.type === "text");
   if (!textBlock) throw new Error("Claude 응답에서 텍스트를 찾지 못했습니다.");
   return textBlock.text.trim();
-}
-
-function isWeekendKST() {
-  const kstNow = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
-  const day = kstNow.getDay(); // 0=일 6=토
-  const iso = kstNow.toISOString().slice(0, 10);
-  // 토요일 아침엔 "전일(금요일)"이 실제 거래일이었으므로 실행해서 금요일 마감 시황을 반영합니다.
-  // 일요일 아침엔 "전일(토요일)"도 휴장이라 가져올 새 내용이 없으므로 건너뜁니다
-  // (돌려도 금요일 글을 또 찾아 똑같은 내용을 재생성할 뿐이라 비용만 낭비됩니다).
-  return day === 0 || KR_HOLIDAYS.includes(iso);
 }
 
 const US_MARKET_CLOSE_HOUR = 16; // 미국 정규장 마감 4:00pm ET (서머타임 여부와 무관하게 America/New_York 기준 시각으로 판단)
@@ -1608,11 +1598,14 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  if (isWeekendKST()) {
-    res.status(200).json({ skipped: true, reason: "주말/공휴일 — 기존 저장값을 그대로 유지합니다." });
-    return;
-  }
-
+  // ⚠️ 예전엔 여기서 "오늘이 국내 기준 주말/공휴일이면" 전체를 건너뛰는 게이트가
+  // 있었는데, 국내 공휴일에 미국 시장은 정상 개장했는데도 미국 시황·지수까지 같이
+  // 못 갱신되는 문제가 있었습니다(예: 광복절 대체공휴일). 지금은 요일과 무관하게
+  // 매일 시도하되, 아래 국내/해외 각 섹션이 "오늘 실제로 새 원문을 찾았는지"를
+  // 각자 독립적으로 판단해서, 새 내용이 없으면 그 쪽만 기존 저장값을 유지합니다
+  // (텔레그램 채널에 오늘자 글이 없으면 자연히 스킵되므로, 주말·공휴일 여부를
+  // 별도 목록으로 관리할 필요가 없어졌습니다 — Claude 호출도 새 원문이 있을 때만
+  // 발생해서 비용이 늘지 않습니다).
   try {
     // 지수 종가 히스토리 누적과 매크로 캘린더는 아래 텔레그램/Claude 브리핑 단계와 무관하니
     // 먼저 독립적으로 처리합니다. (예전엔 이 아래, 텔레그램 원문 fetch·summarize()보다 뒤에
@@ -1662,7 +1655,7 @@ module.exports = async function handler(req, res) {
     }
 
     // 채널 하나가 그날 실패해도(휴가, 형식 변경, 시황 형태 글 없음 등) 나머지
-    // 소스만으로 계속 진행됩니다.
+    // 소스만으로 계속 진행됩니다. 국내·해외는 아래에서 완전히 독립적으로 처리합니다.
     const [krSourcesRaw, usSourcesRaw] = await Promise.all([
       fetchMarketSources(KR_TELEGRAM_CHANNELS, KR_RAW_KEYWORDS),
       fetchMarketSources(US_TELEGRAM_CHANNELS, US_RAW_KEYWORDS),
@@ -1671,75 +1664,103 @@ module.exports = async function handler(req, res) {
     usSourcesRaw.filter((s) => !s.text).forEach((s) => console.warn(`시황 소스 제외 (${s.firm}): ${s.error}`));
     const krSources = onlySuccessful(krSourcesRaw);
     const usSources = onlySuccessful(usSourcesRaw);
-    if (krSources.length === 0) throw new Error("국내 시황 원문을 어느 채널에서도 가져오지 못했습니다.");
-    if (usSources.length === 0) throw new Error("해외 시황 원문을 어느 채널에서도 가져오지 못했습니다.");
 
-    const [krBriefing, usBriefing] = await Promise.all([
-      summarize(krSources, "국내(코스피/코스닥)"),
-      summarize(usSources, "해외(S&P500/나스닥/다우)"),
-    ]);
-
-    // 업종별 이유는 별도 실패로 전체가 죽지 않도록 따로 try/catch 처리합니다.
-    let krSectorReasons = [];
+    // 한쪽 시장만 오늘 새 원문이 없어도(주말·공휴일 등) 그 쪽만 기존 저장값을 그대로
+    // 유지하고 나머지 쪽은 정상 갱신되도록, 먼저 기존 payload를 읽어둡니다.
+    let existingPayload = null;
     try {
-      const { top5, bottom5 } = await fetchKrSectors();
-      krSectorReasons = await generateSectorReasons(krSources, [...top5, ...bottom5], "한국 증시");
+      existingPayload = await redisGet("briefing:latest");
     } catch (err) {
-      console.warn("국내 업종별 이유 생성 실패, 이 부분만 건너뜁니다:", err);
+      console.warn("기존 briefing:latest 조회 실패(최초 실행이거나 일시적 오류일 수 있음):", err);
     }
 
-    let usSectorsTop = [], usSectorsBottom = [], usSectorReasons = [];
-    try {
-      if (!isUsMarketClosedNow()) {
-        throw new Error("미국 정규장이 아직 마감 전이라(장중 값 캡처 방지) 이번 실행에서는 건너뜁니다.");
+    let krResult = existingPayload?.kr || null;
+    if (krSources.length === 0) {
+      console.warn("국내 시황 원문을 어느 채널에서도 가져오지 못했습니다 — 기존 값을 유지합니다.");
+    } else {
+      try {
+        const krBriefing = await summarize(krSources, "국내(코스피/코스닥)");
+        // 업종별 이유는 별도 실패로 국내 시황 전체가 죽지 않도록 따로 try/catch 처리합니다.
+        let krSectorReasons = existingPayload?.kr?.sectorReasons || [];
+        try {
+          const { top5, bottom5 } = await fetchKrSectors();
+          krSectorReasons = await generateSectorReasons(krSources, [...top5, ...bottom5], "한국 증시");
+        } catch (err) {
+          console.warn("국내 업종별 이유 생성 실패, 기존 값을 유지합니다:", err);
+        }
+        const krFirms = krSources.map(s => s.firm).join("·");
+        krResult = {
+          briefing: krBriefing,
+          briefingSource: `출처: ${krFirms}(국내 시황) · Claude 자동 종합`,
+          sectorReasons: krSectorReasons,
+        };
+      } catch (err) {
+        console.warn("국내 시황 생성 실패, 기존 값을 유지합니다:", err);
       }
-      const { top5, bottom5 } = await fetchUsSectorIndices();
-      usSectorReasons = await generateSectorReasons(usSources, [...top5, ...bottom5], "미국 증시");
-      const reasonMap = {};
-      usSectorReasons.forEach(r => { reasonMap[r.name] = r.reason; });
-      usSectorsTop = top5.map(s => ({ ...s, reason: reasonMap[s.name] || "" }));
-      usSectorsBottom = bottom5.map(s => ({ ...s, reason: reasonMap[s.name] || "" }));
-    } catch (err) {
-      console.warn("해외 업종 데이터/이유 생성 실패, 이 부분만 건너뜁니다:", err);
     }
 
-    // 실제로 그날 성공한 소스만 출처에 표시합니다(채널 하나가 실패했으면 자동으로 빠짐).
-    const krFirms = krSources.map(s => s.firm).join("·");
-    const usFirms = usSources.map(s => s.firm).join("·");
+    let usResult = existingPayload?.us || null;
+    if (usSources.length === 0) {
+      console.warn("해외 시황 원문을 어느 채널에서도 가져오지 못했습니다 — 기존 값을 유지합니다.");
+    } else {
+      try {
+        const usBriefing = await summarize(usSources, "해외(S&P500/나스닥/다우)");
+        let usSectorsTop = existingPayload?.us?.sectorsTop || [];
+        let usSectorsBottom = existingPayload?.us?.sectorsBottom || [];
+        try {
+          if (!isUsMarketClosedNow()) {
+            throw new Error("미국 정규장이 아직 마감 전이라(장중 값 캡처 방지) 이번 실행에서는 건너뜁니다.");
+          }
+          const { top5, bottom5 } = await fetchUsSectorIndices();
+          const usSectorReasons = await generateSectorReasons(usSources, [...top5, ...bottom5], "미국 증시");
+          const reasonMap = {};
+          usSectorReasons.forEach(r => { reasonMap[r.name] = r.reason; });
+          usSectorsTop = top5.map(s => ({ ...s, reason: reasonMap[s.name] || "" }));
+          usSectorsBottom = bottom5.map(s => ({ ...s, reason: reasonMap[s.name] || "" }));
+        } catch (err) {
+          console.warn("해외 업종 데이터/이유 생성 실패, 기존 값을 유지합니다:", err);
+        }
+        const usFirms = usSources.map(s => s.firm).join("·");
+        usResult = {
+          briefing: usBriefing,
+          briefingSource: `출처: ${usFirms}(해외 시황) · Claude 자동 종합`,
+          sectorsTop: usSectorsTop,
+          sectorsBottom: usSectorsBottom,
+          sectorsSource: "출처: Yahoo Finance(S&P 500 GICS 섹터 지수) · Claude 자동 요약",
+        };
+      } catch (err) {
+        console.warn("해외 시황 생성 실패, 기존 값을 유지합니다:", err);
+      }
+    }
 
     const payload = {
-      kr: {
-        briefing: krBriefing,
-        briefingSource: `출처: ${krFirms}(국내 시황) · Claude 자동 종합`,
-        sectorReasons: krSectorReasons,
-      },
-      us: {
-        briefing: usBriefing,
-        briefingSource: `출처: ${usFirms}(해외 시황) · Claude 자동 종합`,
-        sectorsTop: usSectorsTop,
-        sectorsBottom: usSectorsBottom,
-        sectorsSource: "출처: Yahoo Finance(S&P 500 GICS 섹터 지수) · Claude 자동 요약",
-      },
+      kr: krResult || { briefing: "", briefingSource: "", sectorReasons: [] },
+      us: usResult || { briefing: "", briefingSource: "", sectorsTop: [], sectorsBottom: [], sectorsSource: "" },
       generatedAt: new Date().toISOString(),
     };
 
     await redisSet("briefing:latest", payload);
 
     // 노션 업데이트는 실패해도 대시보드 데이터 저장에는 영향 없도록 별도 try/catch.
+    // 국내·해외 둘 다 오늘 새 원문이 있어야 의미 있는 노트가 되므로, 하나라도 없으면 건너뜁니다.
     let notionResult = { skipped: true, reason: "NOTION_API_KEY/NOTION_PAGE_ID/NOTION_ANCHOR_BLOCK_ID 미설정" };
     if (NOTION_API_KEY && NOTION_PAGE_ID && NOTION_ANCHOR_BLOCK_ID) {
-      try {
-        let disclosureSummaries = [];
+      if (krSources.length === 0 || usSources.length === 0) {
+        notionResult = { skipped: true, reason: "국내 또는 해외 시황 원문이 없어 노션 업데이트를 건너뜁니다." };
+      } else {
         try {
-          disclosureSummaries = await fetchAndSummarizeDisclosures(todayKSTCompact());
+          let disclosureSummaries = [];
+          try {
+            disclosureSummaries = await fetchAndSummarizeDisclosures(todayKSTCompact());
+          } catch (err) {
+            console.warn("공시 요약 생성 실패, 이 부분만 건너뜁니다:", err);
+          }
+          await postToNotion(krSources, usSources, disclosureSummaries);
+          notionResult = { ok: true };
         } catch (err) {
-          console.warn("공시 요약 생성 실패, 이 부분만 건너뜁니다:", err);
+          console.warn("Notion 업데이트 실패:", err);
+          notionResult = { ok: false, error: String(err) };
         }
-        await postToNotion(krSources, usSources, disclosureSummaries);
-        notionResult = { ok: true };
-      } catch (err) {
-        console.warn("Notion 업데이트 실패:", err);
-        notionResult = { ok: false, error: String(err) };
       }
     }
 
