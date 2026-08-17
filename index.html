@@ -209,6 +209,8 @@
   }
   .macro-cal-item .actual{ font-family:'JetBrains Mono', monospace; font-weight:700; color: var(--ink); white-space:nowrap; }
   .macro-cal-item .previous{ font-family:'JetBrains Mono', monospace; color: var(--ink-faint); white-space:nowrap; }
+  .macro-cal-item .name a{ color: inherit; text-decoration: none; }
+  .macro-cal-item .name a:hover{ color: var(--gold); text-decoration: underline; }
   .macro-cal-empty{ color: var(--ink-faint); font-size: 12.5px; }
   /* 좁은 화면에서는 date+name+value가 한 줄에 다 안 들어가면 name(flex:1, min-width:0)이
      거의 0폭까지 눌려서 한 글자씩 줄바꿈되던(예전 칩 레이아웃과 같은) 문제가 있어서,
@@ -230,9 +232,16 @@
   .cal-tab.active{ border-color: var(--gold); color: var(--gold); background: rgba(var(--gold-rgb),0.1); }
   .cal-tab.active .chev{ transform: rotate(180deg); }
   /* 탭이 3개 이상이면 "이번 주 " 접두어까지 넣었을 때 좁은 화면에서 단어 중간에
-     줄바꿈되므로, 그 폭에서는 접두어를 빼고 "매크로"/"실적"/"공시"만 보여줍니다. */
+     줄바꿈되므로, 그 폭에서는 접두어를 빼고 "매크로"/"실적"/"공시"/"뉴스"만 보여줍니다. */
   @media (max-width: 480px){
     .cal-tab .tab-prefix{ display:none; }
+  }
+  /* 탭이 4개가 되니(뉴스 추가) 접두어를 빼도 "매크로"(3글자)가 flex:1 균등폭에서
+     중간에 줄바꿈되는 경우가 있어서, 좁은 화면에서는 탭을 내용 폭만큼만 차지하게
+     하고 다 안 들어가면 가로 스크롤되게 합니다(흔한 모바일 탭바 패턴). */
+  @media (max-width: 480px){
+    .cal-tabs{ overflow-x: auto; }
+    .cal-tab{ flex: 0 0 auto; white-space: nowrap; }
   }
   .cal-panel{ display:none; }
   .cal-panel.active{ display:block; margin-top:14px; }
@@ -468,6 +477,7 @@
       <div class="cal-tab" data-cal-panel="macro" onclick="selectCalTab('macro')"><span class="tab-prefix">이번 주 </span>매크로 <span class="chev">▾</span></div>
       <div class="cal-tab" data-cal-panel="earnings" onclick="selectCalTab('earnings')"><span class="tab-prefix">이번 주 </span>실적 <span class="chev">▾</span></div>
       <div class="cal-tab" data-cal-panel="disclosures" onclick="selectCalTab('disclosures')"><span class="tab-prefix">이번 주 </span>공시 <span class="chev">▾</span></div>
+      <div class="cal-tab" data-cal-panel="news" onclick="selectCalTab('news')">뉴스 <span class="chev">▾</span></div>
     </div>
 
     <div class="cal-panel" data-cal-panel="macro">
@@ -487,6 +497,10 @@
 
     <div class="cal-panel" data-cal-panel="disclosures">
       <div class="macro-cal-list" id="disclosuresCalList"></div>
+    </div>
+
+    <div class="cal-panel" data-cal-panel="news">
+      <div class="macro-cal-list" id="newsCalList"></div>
     </div>
   </section>
 
@@ -643,6 +657,8 @@
     earningsCalendar: [],
     // cron-briefing.js가 DART에서 매일 가져와 기계적으로 필터링해 쌓아둔 값으로 fetchLiveData()가 채웁니다.
     disclosuresCalendar: [],
+    // cron-briefing.js가 네이버 뉴스·Finnhub에서 매일 가져와 기계필터+Claude 최종선별한 값으로 fetchLiveData()가 채웁니다.
+    newsCalendar: [],
     // /api/briefing의 generatedAt — 크론이 마지막으로 "성공적으로" 실행된 시각 (실패 감지용).
     lastCronRun: null,
     ticker: [
@@ -737,6 +753,7 @@
   const MACRO_CALENDAR_API = "/api/calendar?type=macro";
   const EARNINGS_CALENDAR_API = "/api/calendar?type=earnings";
   const DISCLOSURES_CALENDAR_API = "/api/calendar?type=disclosures";
+  const NEWS_CALENDAR_API = "/api/calendar?type=news";
   const EXTRA_TICKERS_API = "/api/extra-tickers";
   const TREASURY_YIELDS_API = "/api/treasury-yields";
 
@@ -1072,6 +1089,22 @@
     if (Array.isArray(j.events)) DATA.disclosuresCalendar = j.events;
   }
 
+  // ---- [뉴스] cron이 네이버 뉴스·Finnhub에서 매일 가져와 기계필터+Claude 최종선별해 쌓아둔 최근 뉴스를 읽어옵니다 ----
+  async function fetchNewsRaw(){
+    try {
+      const res = await fetch(NEWS_CALENDAR_API, { cache: "no-store" });
+      if (!res.ok) { console.warn("news-calendar API 응답 실패:", res.status); return null; }
+      return await res.json();
+    } catch (err) {
+      console.warn("뉴스 캘린더 실시간 연동 실패:", err);
+      return null;
+    }
+  }
+  function applyNews(j){
+    if(!j) return;
+    if (Array.isArray(j.events)) DATA.newsCalendar = j.events;
+  }
+
   // ---- [해외 업종 등락률] Finviz — 공식 무료 API는 없음(Elite 구독형, finviz.com/elite). ----
   // 브라우저에서 finviz.com/groups?g=sector&v=140 를 매일 열어서 옮기는 게 현재 방식.
   // 자동화하려면 완전 무료 대안으로 섹터 ETF(XLB·XLK·XLRE·XLI·XLV·XLY·XLU·XLF·XLP·XLC·XLE) 일별 종가를
@@ -1154,7 +1187,7 @@
   // 각 fetch*Raw()는 실패 시 null을 반환합니다(콘솔 경고만 남기고 이전 값 유지).
   // 여기서 실패한 항목 이름을 모아뒀다가 상단에 옅은 경고로 보여줘서, "화면은 그대로인데
   // 사실 최신값이 아닌" 상태를 사용자가 알아챌 수 있게 합니다.
-  const LIVE_FETCH_LABELS = ["국내 지수·업종", "국내 등락 비율", "해외 지수", "국내 지수·환율", "시황 코멘트", "추이 차트", "매크로 캘린더", "원자재·VIX", "국채 금리", "실적 캘린더", "공시 캘린더"];
+  const LIVE_FETCH_LABELS = ["국내 지수·업종", "국내 등락 비율", "해외 지수", "국내 지수·환율", "시황 코멘트", "추이 차트", "매크로 캘린더", "원자재·VIX", "국채 금리", "실적 캘린더", "공시 캘린더", "뉴스 캘린더"];
 
   function renderLiveDataWarn(failedLabels){
     const el = document.getElementById("liveDataWarn");
@@ -1177,8 +1210,9 @@
       fetchTreasuryYieldsRaw(),
       fetchEarningsRaw(),
       fetchDisclosuresRaw(),
+      fetchNewsRaw(),
     ]);
-    const [krMarketResult, breadthJson, usIndicesJson, krIndicesJson, briefingJson, historyJson, macroJson, extraTickersJson, treasuryYieldsJson, earningsJson, disclosuresJson] = results;
+    const [krMarketResult, breadthJson, usIndicesJson, krIndicesJson, briefingJson, historyJson, macroJson, extraTickersJson, treasuryYieldsJson, earningsJson, disclosuresJson, newsJson] = results;
     const failedLabels = LIVE_FETCH_LABELS.filter((_, i) => results[i] === null);
 
     const { krBasDd } = applyKrMarket(krMarketResult);
@@ -1193,6 +1227,7 @@
     applyMacro(macroJson);
     applyEarnings(earningsJson);
     applyDisclosures(disclosuresJson);
+    applyNews(newsJson);
 
     const sectorReasonsOk = await fetchAndApplyKrSectorReasons();
     if (!sectorReasonsOk) failedLabels.push("업종 상세 사유");
@@ -1414,6 +1449,31 @@
         </div>
       `;
     }).join("");
+  }
+
+  // 뉴스 제목·링크는 (네이버/Finnhub 등) 외부 원문 그대로라, KRX/DART처럼 우리가
+  // 직접 계산한 값과 달리 innerHTML에 바로 넣기 전에 이스케이프해둡니다.
+  function escapeHtml(s){
+    return String(s).replace(/[&<>"']/g, c => ({ "&":"&amp;", "<":"&lt;", ">":"&gt;", '"':"&quot;", "'":"&#39;" }[c]));
+  }
+  function safeHttpUrl(url){
+    return /^https?:\/\//i.test(url) ? url : "#";
+  }
+
+  function renderNewsCalendar(events){
+    const el = document.getElementById("newsCalList");
+    if(!el) return;
+    if(!Array.isArray(events) || events.length === 0){
+      el.innerHTML = `<div class="macro-cal-empty">최근 선별된 주요 뉴스가 없습니다.</div>`;
+      return;
+    }
+    el.innerHTML = events.map(e => `
+      <div class="macro-cal-item">
+        <span class="date mono">${formatShortKoreanDate(e.date)}</span>
+        <span class="name"><a href="${escapeHtml(safeHttpUrl(e.link))}" target="_blank" rel="noopener">${escapeHtml(e.title)}</a></span>
+        <span class="value"><span class="period mono">${escapeHtml(e.source)}</span></span>
+      </div>
+    `).join("");
   }
 
   // 기본은 접힌 상태(둘 다 active 없음). 탭을 누르면 그 탭만 펼쳐지고, 펼쳐진 탭을
@@ -1679,6 +1739,7 @@
     renderMacroCalendar(DATA.macroCalendar);
     renderEarningsCalendar(DATA.earningsCalendar);
     renderDisclosuresCalendar(DATA.disclosuresCalendar);
+    renderNewsCalendar(DATA.newsCalendar);
 
     renderIndexRow("kr-index-row", DATA.kr.indices, "kr");
     updateTrendChart("kr");

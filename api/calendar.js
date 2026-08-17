@@ -12,7 +12,7 @@
 // 별도 파일로 추가했다가 13개가 되어 배포가 실패한 적이 있습니다) — 새 "읽기 전용
 // 캘린더류" 데이터가 또 필요해지면(예: 뉴스) REDIS_KEYS에 한 줄만 추가하세요.
 //
-// 호출: GET https://<your-project>.vercel.app/api/calendar?type=macro|earnings|disclosures
+// 호출: GET https://<your-project>.vercel.app/api/calendar?type=macro|earnings|disclosures|news
 // 응답: { "events": [...] } (형식은 type마다 다름 — 각 cron-briefing.js 저장 로직 참고)
 // -----------------------------------------------------------------------------
 
@@ -23,6 +23,7 @@ const REDIS_KEYS = {
   macro: "macro:calendar",
   earnings: "earnings:calendar",
   disclosures: "disclosures:calendar",
+  news: "news:calendar",
 };
 
 module.exports = async function handler(req, res) {
