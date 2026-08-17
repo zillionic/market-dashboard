@@ -135,6 +135,7 @@
   .market-status.closed{ color: var(--gold); font-weight: 600; }
   /* 실시간 갱신 중 일부 API 호출이 실패해 이전 값을 그대로 표시할 때만 나타납니다(평소엔 빈 텍스트) */
   .live-warn{ font-size: 10.5px; color: var(--gold); font-weight: 600; margin-top: 5px; max-width: 220px; text-align: right; }
+  .live-warn.offline-text{ color: var(--us-down); }
   .badge{
     display:inline-block; font-size:10.5px; padding:2px 8px; border-radius:999px;
     margin-top:5px; font-family:'JetBrains Mono', monospace; letter-spacing:0.03em;
@@ -142,6 +143,11 @@
   }
   .badge.snapshot{ background: rgba(var(--gold-rgb),0.15); color: var(--gold); border:1px solid rgba(var(--gold-rgb),0.35); }
   .badge.live{ background: rgba(47,168,79,0.15); color: var(--us-up); border:1px solid rgba(47,168,79,0.35); }
+  /* LIVE인데 데이터 소스 일부/전부가 갱신 실패한 경우 — API 연동 모드(USE_LIVE_API)와
+     실제 연동 성공 여부는 별개라서, "LIVE" 배지가 실패 중에도 항상 초록으로 고정되던
+     문제를 고치기 위해 추가했습니다(renderLiveDataWarn의 liveConnectionState 참고). */
+  .badge.partial{ background: rgba(var(--gold-rgb),0.15); color: var(--gold); border:1px solid rgba(var(--gold-rgb),0.35); }
+  .badge.offline{ background: rgba(var(--down-rgb),0.15); color: var(--us-down); border:1px solid rgba(var(--down-rgb),0.35); }
 
   /* ---------- ticker ---------- */
   .ticker-wrap{
@@ -1203,12 +1209,25 @@
   // 사실 최신값이 아닌" 상태를 사용자가 알아챌 수 있게 합니다.
   const LIVE_FETCH_LABELS = ["국내 지수·업종", "국내 등락 비율", "해외 지수", "국내 지수·환율", "시황 코멘트", "추이 차트", "매크로 캘린더", "원자재·VIX", "국채 금리", "실적 캘린더", "공시 캘린더", "뉴스 캘린더"];
 
+  // "LIVE" 배지가 실제 연동 성공 여부와 무관하게 항상 초록으로 고정되던 문제를 고치기
+  // 위한 상태값입니다("ok"/"partial"/"offline") — render()가 배지를 그릴 때 참고합니다.
+  let liveConnectionState = "ok";
+
   function renderLiveDataWarn(failedLabels){
     const el = document.getElementById("liveDataWarn");
-    if(!el) return;
-    el.textContent = failedLabels.length > 0
-      ? `⚠ 갱신 실패: ${failedLabels.join(", ")} (이전 값 표시 중)`
-      : "";
+    // 업종 상세 사유는 LIVE_FETCH_LABELS(핵심 12종) 밖의 보조 호출이라, "전부 실패"
+    // 판정은 핵심 12종 기준으로만 셉니다.
+    const coreFailedCount = failedLabels.filter((l) => LIVE_FETCH_LABELS.includes(l)).length;
+    if (coreFailedCount >= LIVE_FETCH_LABELS.length) {
+      liveConnectionState = "offline";
+      if (el) { el.textContent = "⚠ 모든 실시간 연동 실패 (이전 값 표시 중)"; el.className = "live-warn offline-text"; }
+    } else if (failedLabels.length > 0) {
+      liveConnectionState = "partial";
+      if (el) { el.textContent = `⚠ 갱신 실패: ${failedLabels.join(", ")} (이전 값 표시 중)`; el.className = "live-warn"; }
+    } else {
+      liveConnectionState = "ok";
+      if (el) { el.textContent = ""; el.className = "live-warn"; }
+    }
   }
 
   async function fetchLiveData(){
@@ -1746,8 +1765,19 @@
     renderDateStatus();
     document.getElementById("updatedAt").textContent = DATA.updatedAt;
     const badge = document.getElementById("modeBadge");
-    badge.textContent = USE_LIVE_API ? "LIVE" : "SNAPSHOT";
-    badge.className = "badge " + (USE_LIVE_API ? "live" : "snapshot");
+    if (!USE_LIVE_API) {
+      badge.textContent = "SNAPSHOT";
+      badge.className = "badge snapshot";
+    } else if (liveConnectionState === "offline") {
+      badge.textContent = "OFFLINE";
+      badge.className = "badge offline";
+    } else if (liveConnectionState === "partial") {
+      badge.textContent = "LIVE · 일부 지연";
+      badge.className = "badge partial";
+    } else {
+      badge.textContent = "LIVE";
+      badge.className = "badge live";
+    }
 
     renderTicker();
     renderMacroCalendar(DATA.macroCalendar);
