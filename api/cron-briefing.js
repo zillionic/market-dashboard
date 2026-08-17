@@ -1021,13 +1021,17 @@ async function postToNotion(krRaw, usRaw, disclosureSummaries) {
   const usBullets = (marketSection.us || []).map(bullet);
 
   // 텔레그램 원문 기반 종목 뉴스에 DART 공시 요약을 더하되, 이미 같은 회사가
-  // 텔레그램 쪽에서 언급됐으면 중복으로 추가하지 않습니다.
+  // 텔레그램 쪽에서 언급됐으면 중복으로 추가하지 않습니다. 둘 다 활발한 날엔
+  // 합쳐서 너무 길어질 수 있어서, 최종 개수를 MAX_STOCK_NEWS_BULLETS로 제한하고
+  // 텔레그램(애널리스트가 이미 한 번 걸러서 언급한 것)을 우선 채운 뒤 남는
+  // 자리만 DART 쪽으로 채웁니다.
+  const MAX_STOCK_NEWS_BULLETS = 5;
   const mentionedText = stockNews.join(" ");
   const dartOnly = (disclosureSummaries || []).filter((d) => !mentionedText.includes(d.corpName));
   const combinedStockNews = [
     ...stockNews,
     ...dartOnly.map((d) => `${d.corpName}, ${d.summary} (공시)`),
-  ];
+  ].slice(0, MAX_STOCK_NEWS_BULLETS);
   const stockBullets = combinedStockNews.length ? combinedStockNews.map(bullet) : [bullet("(오늘은 원문에서 종목별 이슈를 찾지 못했습니다)")];
 
   const children = [
