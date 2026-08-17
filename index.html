@@ -212,13 +212,22 @@
   /* 실적 캘린더와 동일하게 항목마다 한 줄씩 세로로 쌓습니다(예전엔 칩이 flex-wrap으로
      여러 개가 한 줄에 같이 들어갔는데, 날짜별로 스캔하기 어려워서 통일했습니다).
      매크로/공시/뉴스 탭 모두 이 클래스를 공유하는데, 예전엔 실적·뉴스만 높이가
-     고정+스크롤이라 탭마다 열리는 창 높이가 들쭉날쭉했습니다 — 4개 탭 다 여기서
-     똑같이 178px로 고정하고(실적도 .earn-list에서 같은 값으로 맞춤), 매크로 기준
-     4개는 온전히 보이고 5번째가 위쪽만 살짝 걸쳐 보여서 "더 있다"는 걸 알 수
-     있게 했습니다. 스크롤 방식은 실적과 동일(휠 + 드래그, initListDrag 참고). */
+     고정+스크롤이라 탭마다 열리는 창 높이가 들쭉날쭉했습니다 — 4개 탭 다 패널
+     전체 높이를 178px로 통일했습니다. 실적 탭엔 위에 열 헤더(.earn-col-heads)가
+     있어서 리스트 자체는 158px(178-헤더20)이고, 이 세 탭도 열 헤더(.macro-cal-col-heads)를
+     맞춰 넣으면서 마찬가지로 158px로 줄였습니다. 매크로 기준 4개는 온전히 보이고
+     5번째가 위쪽만 살짝 걸쳐 보여서 "더 있다"는 걸 알 수 있게 했습니다.
+     스크롤 방식은 실적과 동일(휠 + 드래그, initListDrag 참고). */
+  .macro-cal-col-heads{
+    display:flex; align-items:center; gap:10px; padding:0 12px; margin-bottom:6px;
+    font-size:10px; color: var(--ink-faint); text-transform:uppercase; letter-spacing:0.04em;
+  }
+  .macro-cal-col-heads .h-date{ width:76px; flex-shrink:0; margin-right:8px; }
+  .macro-cal-col-heads .h-name{ flex:1; }
+  .macro-cal-col-heads .h-value{ flex-shrink:0; text-align:right; }
   .macro-cal-list{
     display:flex; flex-direction:column; gap:7px;
-    max-height: 178px; overflow-y:auto;
+    max-height: 158px; overflow-y:auto;
     cursor: grab; user-select: none; touch-action: none;
     scrollbar-width: none;    /* Firefox */
     -ms-overflow-style: none; /* 구형 Edge/IE */
@@ -294,14 +303,17 @@
   .earn-col-heads .h-eps{ width:150px; flex-shrink:0; }
 
   /* 실적 시즌엔 한 주에 발표하는 종목이 많아져서 세로로 너무 길어질 수 있어서,
-     매크로/공시/뉴스와 같은 높이(178px)로 잘라두고 그 이상은 스크롤로 봅니다.
+     매크로/공시/뉴스와 같은 높이로 잘라두고 그 이상은 스크롤로 봅니다. 다른 탭은
+     리스트만 178px지만, 실적 탭은 위에 열 헤더(.earn-col-heads, 20px = 자체 높이
+     14px + margin-bottom 6px)가 하나 더 있어서, 패널 전체 높이를 맞추려면 리스트는
+     158px(178-20)로 줄여야 합니다.
      마우스 휠은 overflow-y:auto가 그대로 처리하고, 티커 벨트처럼 마우스 드래그·
      터치로도 끌어서 볼 수 있게 JS로 스크롤을 직접 제어합니다(initListDrag).
      오른쪽 스크롤바는 미관상 숨기고(휠·드래그로 여전히 스크롤은 됩니다),
      touch-action:none으로 브라우저 기본 터치 스크롤과 우리 드래그 로직이 서로
      충돌하지 않게 합니다. */
   .earn-list{
-    display:flex; flex-direction:column; gap:7px; max-height: 178px; overflow-y:auto;
+    display:flex; flex-direction:column; gap:7px; max-height: 158px; overflow-y:auto;
     cursor: grab; user-select: none; touch-action: none;
     scrollbar-width: none;    /* Firefox */
     -ms-overflow-style: none; /* 구형 Edge/IE */
@@ -518,14 +530,29 @@
     </div>
 
     <div class="cal-panel" data-cal-panel="news" role="tabpanel">
+      <div class="macro-cal-col-heads">
+        <span class="h-date">날짜</span>
+        <span class="h-name">제목</span>
+        <span class="h-value">출처</span>
+      </div>
       <div class="macro-cal-list" id="newsCalList"></div>
     </div>
 
     <div class="cal-panel" data-cal-panel="disclosures" role="tabpanel">
+      <div class="macro-cal-col-heads">
+        <span class="h-date">날짜</span>
+        <span class="h-name">회사명</span>
+        <span class="h-value">유형</span>
+      </div>
       <div class="macro-cal-list" id="disclosuresCalList"></div>
     </div>
 
     <div class="cal-panel" data-cal-panel="macro" role="tabpanel">
+      <div class="macro-cal-col-heads">
+        <span class="h-date">날짜</span>
+        <span class="h-name">지표</span>
+        <span class="h-value">값</span>
+      </div>
       <div class="macro-cal-list" id="macroCalList"></div>
     </div>
 
