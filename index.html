@@ -135,9 +135,21 @@
   }
   .market-status.open{ color: var(--ink-dim); }
   .market-status.closed{ color: var(--gold); font-weight: 600; }
-  /* 실시간 갱신 중 일부 API 호출이 실패해 이전 값을 그대로 표시할 때만 나타납니다(평소엔 빈 텍스트) */
-  .live-warn{ font-size: 10.5px; color: var(--gold); font-weight: 600; margin-top: 5px; max-width: 220px; text-align: right; }
+  /* 실시간 갱신 중 일부 API 호출이 실패해 이전 값을 그대로 표시할 때만 나타납니다(평소엔 빈 텍스트).
+     실패 항목을 전부 나열하면 여러 줄로 줄바꿈되던 것을 "N개 항목 갱신 실패"로 짧게 요약해서
+     항상 한 줄에 뜨게 했습니다 — 대신 실패 항목명은 title(hover 시 브라우저 기본 툴팁)로 확인 가능.
+     display:inline-block으로 박스를 텍스트 폭에 딱 맞게 줄여서(그냥 block이면 부모 폭만큼
+     늘어나서 점선 밑줄이 텍스트보다 길게 보였음), 오른쪽 정렬은 부모(.status-block)의
+     text-align:right가 그대로 처리합니다. */
+  .live-warn{
+    display: inline-block;
+    font-size: 10.5px; color: var(--gold); font-weight: 600; margin-top: 5px;
+    max-width: 220px; white-space: nowrap;
+    cursor: default; border-bottom: 1px dotted transparent;
+  }
+  .live-warn[title]{ border-bottom-color: rgba(var(--gold-rgb),0.4); }
   .live-warn.offline-text{ color: var(--us-down); }
+  .live-warn.offline-text[title]{ border-bottom-color: rgba(var(--down-rgb),0.4); }
   .badge{
     display:inline-block; font-size:10.5px; padding:2px 8px; border-radius:999px;
     margin-top:5px; font-family:'JetBrains Mono', monospace; letter-spacing:0.03em;
@@ -1222,13 +1234,19 @@
     const coreFailedCount = failedLabels.filter((l) => LIVE_FETCH_LABELS.includes(l)).length;
     if (coreFailedCount >= LIVE_FETCH_LABELS.length) {
       liveConnectionState = "offline";
-      if (el) { el.textContent = "⚠ 모든 실시간 연동 실패 (이전 값 표시 중)"; el.className = "live-warn offline-text"; }
+      if (el) { el.textContent = "⚠ 모든 실시간 연동 실패 (이전 값 표시 중)"; el.className = "live-warn offline-text"; el.removeAttribute("title"); }
     } else if (failedLabels.length > 0) {
       liveConnectionState = "partial";
-      if (el) { el.textContent = `⚠ 갱신 실패: ${failedLabels.join(", ")} (이전 값 표시 중)`; el.className = "live-warn"; }
+      // 실패 항목을 전부 나열하면 여러 줄로 줄바꿈되니, 개수만 짧게 보여주고
+      // 항목명은 title(마우스오버 시 브라우저 기본 툴팁)로 확인하게 합니다.
+      if (el) {
+        el.textContent = `⚠ ${failedLabels.length}개 항목 갱신 실패 (이전 값 표시 중)`;
+        el.className = "live-warn";
+        el.title = failedLabels.join(", ");
+      }
     } else {
       liveConnectionState = "ok";
-      if (el) { el.textContent = ""; el.className = "live-warn"; }
+      if (el) { el.textContent = ""; el.className = "live-warn"; el.removeAttribute("title"); }
     }
   }
 
@@ -1778,7 +1796,7 @@
       badge.textContent = "OFFLINE";
       badge.className = "badge offline";
     } else if (liveConnectionState === "partial") {
-      badge.textContent = "LIVE · 일부 지연";
+      badge.textContent = "DELAY";
       badge.className = "badge partial";
     } else {
       badge.textContent = "LIVE";
