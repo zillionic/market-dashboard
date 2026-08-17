@@ -26,11 +26,13 @@
 //   DART_API_KEY                 - opendart.fss.or.kr 에서 무료 발급(개인, 즉시 이메일 발급)
 //                                 (없으면 노션 "개별 종목 및 이슈"의 공시 요약과 대시보드
 //                                  "공시" 탭 갱신만 조용히 건너뜁니다)
-//   NAVER_CLIENT_ID               - developers.naver.com/apps 에서 "검색" API로 무료 발급
-//   NAVER_CLIENT_SECRET            - 위와 동일한 곳에서 발급
-//                                 (둘 중 하나라도 없으면 대시보드 "뉴스" 탭의 국내 뉴스만
-//                                  조용히 건너뜁니다. FINNHUB_API_KEY 미설정 시 해외 뉴스도
-//                                  마찬가지로 건너뜁니다)
+//   NAVER_CLIENT_ID               - NAVER API HUB(console.ncloud.com > NAVER API HUB >
+//   NAVER_CLIENT_SECRET             "뉴스" API 신청)에서 무료 발급(하루 25,000건).
+//                                 2026-07-31부로 예전 개발자센터(developers.naver.com)
+//                                 신규 발급이 막혀서 NCP 콘솔 경로로 받아야 합니다 — 요금은
+//                                 그대로 무료입니다. (둘 중 하나라도 없으면 대시보드 "뉴스"
+//                                 탭의 국내 뉴스만 조용히 건너뜁니다. FINNHUB_API_KEY
+//                                 미설정 시 해외 뉴스도 마찬가지로 건너뜁니다)
 //
 // 휴일 처리: 오늘이 한국 기준 토/일이면 아무 것도 안 하고 종료합니다.
 // Upstash에 저장된 값(가장 최근 평일 요약)이 그대로 유지되므로,
@@ -925,8 +927,15 @@ async function fetchDisclosuresCalendar() {
 // 재구성 없음 — 실제 기사로 링크가 걸리는 헤드라인이라 왜곡 위험을 없애는 게
 // 더 중요합니다).
 // ============================================================================
+// ⚠️ 2026-07-31부로 네이버 검색 API 신규 발급이 기존 개발자센터(openapi.naver.com)에서
+// NAVER API HUB(NCP 콘솔)로 이관되어, 엔드포인트·인증 헤더가 예전과 다릅니다.
+// (openapi.naver.com/v1/search/news.json + X-Naver-Client-Id/Secret 방식이 아니라
+// naverapihub.apigw.ntruss.com/search/v1/news + X-NCP-APIGW-API-KEY-ID/KEY 방식.)
+// 요금은 그대로 무료(하루 25,000건)입니다 — NCP 콘솔 > NAVER API HUB에서 "뉴스"
+// API를 신청하면 발급되는 Client ID/Secret을 아래 두 환경변수에 넣으면 됩니다.
 const NAVER_CLIENT_ID = process.env.NAVER_CLIENT_ID;
 const NAVER_CLIENT_SECRET = process.env.NAVER_CLIENT_SECRET;
+const NAVER_NEWS_ENDPOINT = "https://naverapihub.apigw.ntruss.com/search/v1/news";
 
 // 임의 종목명 전수 검색은 노이즈만 늘어나므로, 시장 전반에 영향 있는 고정
 // 키워드로만 좁게 검색합니다. 더 넓히고 싶으면 이 배열에 키워드만 추가하세요.
@@ -967,11 +976,11 @@ function isWithinLookbackHours(date, hours) {
 }
 
 async function fetchNaverNews(query) {
-  const url = `https://openapi.naver.com/v1/search/news.json?query=${encodeURIComponent(query)}&display=100&sort=date`;
+  const url = `${NAVER_NEWS_ENDPOINT}?query=${encodeURIComponent(query)}&display=100&sort=date`;
   const res = await fetch(url, {
     headers: {
-      "X-Naver-Client-Id": NAVER_CLIENT_ID,
-      "X-Naver-Client-Secret": NAVER_CLIENT_SECRET,
+      "X-NCP-APIGW-API-KEY-ID": NAVER_CLIENT_ID,
+      "X-NCP-APIGW-API-KEY": NAVER_CLIENT_SECRET,
     },
   });
   if (!res.ok) throw new Error(`네이버 뉴스 검색 실패 (${query}, ${res.status})`);
