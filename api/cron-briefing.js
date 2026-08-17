@@ -1,8 +1,10 @@
 // api/cron-briefing.js
 // -----------------------------------------------------------------------------
 // Vercel Cron이 매일 아침 8시(KST) 자동 호출하는 함수 (스케줄은 vercel.json 참고).
-// 신한투자증권(t.me/shStrategy)·미래에셋증권(t.me/ehdwl) 최신 글을 읽어서
-// Claude API로 5줄 개조식 요약을 만들고, Upstash Redis에 저장합니다.
+// 국내는 신한투자증권·유안타증권·메리츠증권·키움증권, 해외는 미래에셋증권 리서치
+// 텔레그램 채널(KR_TELEGRAM_CHANNELS/US_TELEGRAM_CHANNELS 참고)의 최신 글을 읽어서
+// Claude API로 종합 5줄 개조식 요약을 만들고, Upstash Redis에 저장합니다. 국내는
+// 여러 소스를 종합하되 증권사별로 시각이 갈리는 이슈는 각각 대비해서 표시합니다.
 //
 // 필요한 환경변수 (Vercel 프로젝트 > Settings > Environment Variables):
 //   ANTHROPIC_API_KEY         - console.anthropic.com에서 발급
@@ -481,17 +483,61 @@ async function fetchLatestPost(channel, mustContainAll = []) {
   return stripHtml(blocks[blocks.length - 1][1]);
 }
 
-async function summarize(rawText, marketLabel) {
-  const prompt = `다음은 ${marketLabel} 시황을 다루는 증권사 텔레그램 채널의 최신 글입니다. 이 내용을 참고해서 5줄 내외의 간결한 시황 요약을 작성해주세요.
+// ============================================================================
+// 시황 원문 소스 — 국내는 여러 증권사 리서치 채널을 종합합니다. 채널 하나가 그날
+// 글 형식을 바꾸거나 응답이 없어도(휴가, 채널명 변경 등) 나머지 소스만으로 계속
+// 진행되도록 Promise.allSettled로 개별 실패를 허용합니다.
+//
+// ⚠️ mustContainAll 키워드는 신한(shStrategy)·미래에셋(ehdwl) 채널 글 형식에 맞춰
+// 검증된 것이고, 새로 추가한 3개 채널(유안타·메리츠·키움)이 실제로 이 키워드로
+// 오늘자 시황 글을 잘 찾아내는지는 배포 후 ?debugRaw=1로 직접 확인해서 필요하면
+// 채널별로 다르게 튜닝해주세요.
+// ============================================================================
+const KR_TELEGRAM_CHANNELS = [
+  { id: "shStrategy", firm: "신한투자증권" },
+  { id: "tRadarnewsdesk", firm: "유안타증권" },
+  { id: "meritz_research", firm: "메리츠증권" },
+  { id: "KiwoomResearch", firm: "키움증권" },
+];
+const US_TELEGRAM_CHANNELS = [
+  { id: "ehdwl", firm: "미래에셋증권" },
+];
+const KR_RAW_KEYWORDS = ["코스피", "코스닥"];
+const US_RAW_KEYWORDS = ["S&P", "나스닥"];
+
+async function fetchMarketSources(channels, mustContainAll) {
+  const settled = await Promise.allSettled(channels.map((c) => fetchLatestPost(c.id, mustContainAll)));
+  return channels
+    .map((c, i) => ({
+      firm: c.firm,
+      text: settled[i].status === "fulfilled" ? settled[i].value : null,
+      error: settled[i].status === "rejected" ? String(settled[i].reason) : null,
+    }))
+    .filter((s) => s.text);
+}
+
+// Claude 프롬프트에 넣을 "[증권사명]\n원문" 블록. 여러 소스일 때 Claude가 어느
+// 내용이 어느 증권사 것인지 알아야 "시각이 갈리면 각각 표시"를 할 수 있습니다.
+function formatSourcesBlock(sources) {
+  return sources.map((s) => `[${s.firm}]\n${s.text}`).join("\n\n---\n\n");
+}
+
+async function summarize(sources, marketLabel) {
+  const multi = sources.length > 1;
+  const divergenceNote = multi
+    ? ` 여러 증권사의 공통된 시각은 하나로 종합해서 쓰고, 같은 이슈에 대해 증권사별로 시각이 뚜렷하게 갈리는 부분이 있으면(업황 전망, 금리 영향 해석 등) "OO증권은 ~로 보는 반면 XX증권은 ~로 봄"처럼 구체적으로 대비해서 한 줄로 짚어주세요. 사소한 표현 차이까지 다 짚을 필요는 없고, 실제로 시각이 갈리는 중요한 지점만 다루면 됩니다.`
+    : "";
+  const prompt = `다음은 ${marketLabel} 시황을 다루는 증권사 리서치 텔레그램 채널${multi ? ` ${sources.length}곳` : ""}의 오늘자 글입니다.
+
+${formatSourcesBlock(sources)}
+
+이 내용을 참고해서 5줄 내외의 간결한 시황 요약을 작성해주세요.${divergenceNote}
 
 스타일 규칙 (반드시 지켜주세요):
 - 개조식(명사형 종결)으로 작성. 예: "고용 7만 건으로 컨센서스 6만 대비 상회" (O) / "고용이 7만 건으로 컨센서스 6만 대비 상회했습니다" (X)
 - 각 줄은 <br> 태그로 구분해서 하나의 문자열로 작성 (예: "내용1<br>내용2<br>내용3<br>내용4<br>내용5")
 - 핵심 수치와 종목명은 <strong>태그로 감싸서 강조
-- 부연 설명이나 전제 문구 없이, 최종 결과 문자열만 출력하세요 (따옴표나 마크다운 코드블록도 넣지 마세요)
-
-원문:
-${rawText}`;
+- 부연 설명이나 전제 문구 없이, 최종 결과 문자열만 출력하세요 (따옴표나 마크다운 코드블록도 넣지 마세요)`;
 
   const res = await fetch("https://api.anthropic.com/v1/messages", {
     method: "POST",
@@ -613,14 +659,13 @@ async function fetchKrSectors() {
 
 // 업종 TOP5/BOTTOM5 각각에 대해 "왜 그렇게 움직였는지" 한 줄 이유를 Claude가 생성합니다.
 // 텔레그램 원문에 관련 내용이 있으면 그걸 활용하고, 없으면 업종 특성 기반으로 합리적으로 추정합니다.
-async function generateSectorReasons(rawText, sectors, marketLabel) {
+async function generateSectorReasons(sources, sectors, marketLabel) {
   if (sectors.length === 0) return [];
 
   const sectorList = sectors.map((s) => `- ${s.name} (${s.pct > 0 ? "+" : ""}${s.pct}%)`).join("\n");
-  const prompt = `다음은 오늘 ${marketLabel} 시황을 다루는 증권사 텔레그램 채널의 최신 글입니다.
+  const prompt = `다음은 오늘 ${marketLabel} 시황을 다루는 증권사 리서치 텔레그램 채널의 오늘자 글입니다.
 
-원문:
-${rawText}
+${formatSourcesBlock(sources)}
 
 아래는 오늘 실제로 상승·하락 상위로 집계된 업종 목록입니다. 각 업종별로 왜 그런 움직임을 보였는지 개조식(명사형 종결)으로 15~25자 내외의 아주 간결한 한 줄 이유를 작성해주세요. 원문에 관련 내용이 있으면 그걸 활용하고, 없으면 업종 특성과 시황 전반을 참고해 합리적으로 추정해서 작성하세요.
 
@@ -900,16 +945,16 @@ function bullet(text) {
 }
 
 // 오늘의 "시장" 문단을 노트 스타일(국내/해외 굵게 리드인 + 서술형)로 생성합니다.
-async function generateMarketSection(krRaw, usRaw) {
-  const prompt = `아래는 오늘 국내·해외 시황을 다루는 증권사 텔레그램 채널 원문 2개입니다.
+async function generateMarketSection(krSources, usSources) {
+  const prompt = `아래는 오늘 국내·해외 시황을 다루는 증권사 리서치 텔레그램 채널 원문입니다.
 
-[국내 시황 원문]
-${krRaw}
+[국내 시황 원문 — ${krSources.length}곳]
+${formatSourcesBlock(krSources)}
 
-[해외 시황 원문]
-${usRaw}
+[해외 시황 원문 — ${usSources.length}곳]
+${formatSourcesBlock(usSources)}
 
-이 내용을 참고해서, 매일 아침 운용팀 회의용으로 정리하는 "시장" 섹션을 작성해주세요. 대시보드용 5줄 요약보다 훨씬 자세하게, 등락 수치 나열이 아니라 "왜 그렇게 움직였는지" 배경과 논리 중심으로 불릿 형태로 작성합니다.
+이 내용을 참고해서, 매일 아침 운용팀 회의용으로 정리하는 "시장" 섹션을 작성해주세요. 대시보드용 5줄 요약보다 훨씬 자세하게, 등락 수치 나열이 아니라 "왜 그렇게 움직였는지" 배경과 논리 중심으로 불릿 형태로 작성합니다. 여러 증권사의 공통된 시각은 하나로 종합하고, 같은 이슈에 대해 증권사별로 시각이 뚜렷하게 갈리는 부분이 있으면 "OO증권은 ~로 보는 반면 XX증권은 ~로 봄"처럼 구체적으로 대비해서 다뤄주세요.
 
 아래 예시 스타일 그대로 작성하세요 (실제 20260812 노트에서 발췌):
 
@@ -962,16 +1007,16 @@ ${usRaw}
 
 // "개별 종목 및 이슈" 불릿 리스트 — 원문에 언급된 종목별 실적·공시·뉴스만 추립니다.
 // (팀 내부 미팅/NDR 판단 내용은 원문에 없으므로 여기 포함되지 않습니다.)
-async function generateStockNewsSection(krRaw, usRaw) {
-  const prompt = `아래는 오늘 국내·해외 시황을 다루는 증권사 텔레그램 채널 원문 2개입니다.
+async function generateStockNewsSection(krSources, usSources) {
+  const prompt = `아래는 오늘 국내·해외 시황을 다루는 증권사 리서치 텔레그램 채널 원문입니다.
 
-[국내 시황 원문]
-${krRaw}
+[국내 시황 원문 — ${krSources.length}곳]
+${formatSourcesBlock(krSources)}
 
-[해외 시황 원문]
-${usRaw}
+[해외 시황 원문 — ${usSources.length}곳]
+${formatSourcesBlock(usSources)}
 
-이 원문에서 "개별 종목별 실적 발표, 공시(공급계약·유상증자 등), 주가에 영향을 줄 만한 뉴스"만 뽑아서 불릿 목록으로 정리해주세요. 아래 예시 스타일 그대로 작성하세요.
+이 원문에서 "개별 종목별 실적 발표, 공시(공급계약·유상증자 등), 주가에 영향을 줄 만한 뉴스"만 뽑아서 불릿 목록으로 정리해주세요. 여러 채널에서 같은 뉴스가 중복으로 언급되면 한 번만 포함하세요. 아래 예시 스타일 그대로 작성하세요.
 
 예시:
 - KT, 2Q26 매출 6.7조(YoY 10%), 영업이익 6,483억(YoY -36%), 컨센서스 상회
@@ -1011,10 +1056,10 @@ function todayKSTCompact() {
   return kst.replace(/-/g, "");
 }
 
-async function postToNotion(krRaw, usRaw, disclosureSummaries) {
+async function postToNotion(krSources, usSources, disclosureSummaries) {
   const [marketSection, stockNews] = await Promise.all([
-    generateMarketSection(krRaw, usRaw),
-    generateStockNewsSection(krRaw, usRaw),
+    generateMarketSection(krSources, usSources),
+    generateStockNewsSection(krSources, usSources),
   ]);
 
   const krBullets = (marketSection.kr || []).map(bullet);
@@ -1076,15 +1121,25 @@ module.exports = async function handler(req, res) {
     return;
   }
 
-  // 진단용: ?debugRaw=1 로 호출하면 Claude 호출 없이 텔레그램에서 실제로 가져온 원문 그대로 보여줍니다.
-  // (국내/해외 내용이 뒤바뀌어 보일 때, 소스 자체 문제인지 Claude 문제인지 구분하는 용도)
+  // 진단용: ?debugRaw=1 로 호출하면 Claude 호출 없이 각 채널에서 실제로 가져온 원문과
+  // 성공/실패 여부를 그대로 보여줍니다. 새로 추가한 채널(유안타·메리츠·키움)이 실제로
+  // mustContainAll 키워드로 오늘자 시황 글을 잘 찾아내는지 이걸로 확인하세요 — 못
+  // 찾으면 해당 채널의 KR_TELEGRAM_CHANNELS 항목 옆에 채널별 키워드를 따로 지정해야
+  // 할 수 있습니다.
   if (req.query.debugRaw) {
     try {
-      const [krRaw, usRaw] = await Promise.all([
-        fetchLatestPost("shStrategy", ["코스피", "코스닥"]),
-        fetchLatestPost("ehdwl", ["S&P", "나스닥"]),
+      const [krSources, usSources] = await Promise.all([
+        fetchMarketSources(KR_TELEGRAM_CHANNELS, KR_RAW_KEYWORDS),
+        fetchMarketSources(US_TELEGRAM_CHANNELS, US_RAW_KEYWORDS),
       ]);
-      res.status(200).json({ krRaw, usRaw });
+      const failedFirms = (channels) => channels
+        .filter((c) => !krSources.concat(usSources).some((s) => s.firm === c.firm))
+        .map((c) => c.firm);
+      res.status(200).json({
+        kr: krSources,
+        us: usSources,
+        failedChannels: [...failedFirms(KR_TELEGRAM_CHANNELS), ...failedFirms(US_TELEGRAM_CHANNELS)],
+      });
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }
@@ -1096,11 +1151,11 @@ module.exports = async function handler(req, res) {
   if (req.query.debugMarket) {
     if (!requireCronSecret(req, res)) return;
     try {
-      const [krRaw, usRaw] = await Promise.all([
-        fetchLatestPost("shStrategy", ["코스피", "코스닥"]),
-        fetchLatestPost("ehdwl", ["S&P", "나스닥"]),
+      const [krSources, usSources] = await Promise.all([
+        fetchMarketSources(KR_TELEGRAM_CHANNELS, KR_RAW_KEYWORDS),
+        fetchMarketSources(US_TELEGRAM_CHANNELS, US_RAW_KEYWORDS),
       ]);
-      const marketSection = await generateMarketSection(krRaw, usRaw);
+      const marketSection = await generateMarketSection(krSources, usSources);
       res.status(200).json(marketSection);
     } catch (err) {
       res.status(500).json({ error: String(err) });
@@ -1252,9 +1307,10 @@ module.exports = async function handler(req, res) {
 
   try {
     // 지수 종가 히스토리 누적과 매크로 캘린더는 아래 텔레그램/Claude 브리핑 단계와 무관하니
-    // 먼저 독립적으로 처리합니다. (예전엔 이 아래, krRaw/usRaw·summarize()보다 뒤에 있었는데,
-    // 텔레그램 스크레이핑이나 Claude 요약이 실패하면 그 실패가 여기까지 전파돼서 각자 try/catch로
-    // 감싸놨어도 아예 실행조차 안 되는 버그가 있었습니다 — 히스토리가 계속 안 쌓이던 원인.)
+    // 먼저 독립적으로 처리합니다. (예전엔 이 아래, 텔레그램 원문 fetch·summarize()보다 뒤에
+    // 있었는데, 텔레그램 스크레이핑이나 Claude 요약이 실패하면 그 실패가 여기까지 전파돼서
+    // 각자 try/catch로 감싸놨어도 아예 실행조차 안 되는 버그가 있었습니다 — 히스토리가 계속
+    // 안 쌓이던 원인.)
     try {
       const { kr, us } = await fetchIndexCloses();
       await Promise.all([
@@ -1283,21 +1339,24 @@ module.exports = async function handler(req, res) {
       console.warn("실적 캘린더 갱신 실패, 이 부분만 건너뜁니다:", err);
     }
 
-    const [krRaw, usRaw] = await Promise.all([
-      fetchLatestPost("shStrategy", ["코스피", "코스닥"]),
-      fetchLatestPost("ehdwl", ["S&P", "나스닥"]),
+    // 채널 하나가 그날 실패해도(휴가, 형식 변경 등) 나머지 소스만으로 계속 진행됩니다.
+    const [krSources, usSources] = await Promise.all([
+      fetchMarketSources(KR_TELEGRAM_CHANNELS, KR_RAW_KEYWORDS),
+      fetchMarketSources(US_TELEGRAM_CHANNELS, US_RAW_KEYWORDS),
     ]);
+    if (krSources.length === 0) throw new Error("국내 시황 원문을 어느 채널에서도 가져오지 못했습니다.");
+    if (usSources.length === 0) throw new Error("해외 시황 원문을 어느 채널에서도 가져오지 못했습니다.");
 
     const [krBriefing, usBriefing] = await Promise.all([
-      summarize(krRaw, "국내(코스피/코스닥)"),
-      summarize(usRaw, "해외(S&P500/나스닥/다우)"),
+      summarize(krSources, "국내(코스피/코스닥)"),
+      summarize(usSources, "해외(S&P500/나스닥/다우)"),
     ]);
 
     // 업종별 이유는 별도 실패로 전체가 죽지 않도록 따로 try/catch 처리합니다.
     let krSectorReasons = [];
     try {
       const { top5, bottom5 } = await fetchKrSectors();
-      krSectorReasons = await generateSectorReasons(krRaw, [...top5, ...bottom5], "한국 증시");
+      krSectorReasons = await generateSectorReasons(krSources, [...top5, ...bottom5], "한국 증시");
     } catch (err) {
       console.warn("국내 업종별 이유 생성 실패, 이 부분만 건너뜁니다:", err);
     }
@@ -1308,7 +1367,7 @@ module.exports = async function handler(req, res) {
         throw new Error("미국 정규장이 아직 마감 전이라(장중 값 캡처 방지) 이번 실행에서는 건너뜁니다.");
       }
       const { top5, bottom5 } = await fetchUsSectorIndices();
-      usSectorReasons = await generateSectorReasons(usRaw, [...top5, ...bottom5], "미국 증시");
+      usSectorReasons = await generateSectorReasons(usSources, [...top5, ...bottom5], "미국 증시");
       const reasonMap = {};
       usSectorReasons.forEach(r => { reasonMap[r.name] = r.reason; });
       usSectorsTop = top5.map(s => ({ ...s, reason: reasonMap[s.name] || "" }));
@@ -1317,15 +1376,19 @@ module.exports = async function handler(req, res) {
       console.warn("해외 업종 데이터/이유 생성 실패, 이 부분만 건너뜁니다:", err);
     }
 
+    // 실제로 그날 성공한 소스만 출처에 표시합니다(채널 하나가 실패했으면 자동으로 빠짐).
+    const krFirms = krSources.map(s => s.firm).join("·");
+    const usFirms = usSources.map(s => s.firm).join("·");
+
     const payload = {
       kr: {
         briefing: krBriefing,
-        briefingSource: "출처: 신한투자증권 강진혁(국내 시황, t.me/shStrategy) · Claude 자동 요약",
+        briefingSource: `출처: ${krFirms}(국내 시황) · Claude 자동 종합`,
         sectorReasons: krSectorReasons,
       },
       us: {
         briefing: usBriefing,
-        briefingSource: "출처: 사제콩이_서상영(미래에셋증권, t.me/ehdwl) · Claude 자동 요약",
+        briefingSource: `출처: ${usFirms}(해외 시황) · Claude 자동 종합`,
         sectorsTop: usSectorsTop,
         sectorsBottom: usSectorsBottom,
         sectorsSource: "출처: Yahoo Finance(S&P 500 GICS 섹터 지수) · Claude 자동 요약",
@@ -1345,7 +1408,7 @@ module.exports = async function handler(req, res) {
         } catch (err) {
           console.warn("공시 요약 생성 실패, 이 부분만 건너뜁니다:", err);
         }
-        await postToNotion(krRaw, usRaw, disclosureSummaries);
+        await postToNotion(krSources, usSources, disclosureSummaries);
         notionResult = { ok: true };
       } catch (err) {
         console.warn("Notion 업데이트 실패:", err);
