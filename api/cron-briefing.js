@@ -24,7 +24,8 @@
 //   FINNHUB_API_KEY              - finnhub.io/register 에서 무료 발급 (개인용, 분당 60콜)
 //                                 (없으면 실적 캘린더 갱신만 조용히 건너뜁니다)
 //   DART_API_KEY                 - opendart.fss.or.kr 에서 무료 발급(개인, 즉시 이메일 발급)
-//                                 (없으면 노션 "개별 종목 및 이슈"의 공시 요약만 조용히 건너뜁니다)
+//                                 (없으면 노션 "개별 종목 및 이슈"의 공시 요약과 대시보드
+//                                  "공시" 탭 갱신만 조용히 건너뜁니다)
 //
 // 휴일 처리: 오늘이 한국 기준 토/일이면 아무 것도 안 하고 종료합니다.
 // Upstash에 저장된 값(가장 최근 평일 요약)이 그대로 유지되므로,
@@ -808,13 +809,13 @@ const DART_NOTABLE_PATTERNS = [
 // 걸러내지 않으면 하나의 사건이 Claude 요약에 중복으로 들어갈 수 있습니다.
 const DART_AMENDMENT_TITLE_PATTERN = /^\[(기재정정|첨부정정|첨부추가|정정신고)\]/;
 
-async function fetchDartDisclosuresRaw(dateStr) {
+async function fetchDartDisclosuresRaw(bgnDe, endDe = bgnDe) {
   let rows = [];
   // total_page가 이 상한을 넘는 비정상 상황(무한루프)을 막기 위한 안전장치일 뿐이라
   // 넉넉하게 잡습니다 — 실제로 60(=6,000건)을 밑도는 날에는 total_page를 만나는 대로
   // 그전에 멈춥니다.
   for (let page = 1; page <= 60; page++) {
-    const url = `${DART_LIST_ENDPOINT}?crtfc_key=${DART_API_KEY}&bgn_de=${dateStr}&end_de=${dateStr}&page_no=${page}&page_count=100`;
+    const url = `${DART_LIST_ENDPOINT}?crtfc_key=${DART_API_KEY}&bgn_de=${bgnDe}&end_de=${endDe}&page_no=${page}&page_count=100`;
     const res = await fetch(url);
     if (!res.ok) throw new Error(`DART API 오류 (${res.status})`);
     const json = await res.json();
@@ -840,7 +841,7 @@ function filterNotableDisclosures(rows) {
     const dedupeKey = `${r.corp_code}|${hit.label}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
-    result.push({ corpName: r.corp_name, corpCode: r.corp_code, title, type: hit.label, rceptNo: r.rcept_no });
+    result.push({ date: r.rcept_dt, corpName: r.corp_name, corpCode: r.corp_code, title, type: hit.label, rceptNo: r.rcept_no });
   }
   return result;
 }
@@ -886,6 +887,27 @@ async function fetchAndSummarizeDisclosures(dateStr) {
   const rawRows = await fetchDartDisclosuresRaw(dateStr);
   const notable = filterNotableDisclosures(rawRows);
   return generateDisclosureSummaries(notable);
+}
+
+function kstDateStrOffset(offsetDays) {
+  const kst = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
+  kst.setDate(kst.getDate() + offsetDays);
+  const y = kst.getFullYear(), m = String(kst.getMonth() + 1).padStart(2, "0"), d = String(kst.getDate()).padStart(2, "0");
+  return `${y}${m}${d}`;
+}
+
+// 대시보드 "공시" 탭용 — 최근 1주일치를 기계적 1차 필터만 거쳐 전부 반환합니다
+// (노션용과 달리 Claude 최종 선별은 안 함: 대시보드는 스크롤 가능한 목록이라
+// 노션 노트 한 줄 길이 제약이 없고, 매일 조금씩 갱신되니 며칠 지켜보며
+// 화이트리스트 자체를 다듬는 게 더 유용합니다). 최신 날짜가 먼저 오도록 정렬합니다.
+async function fetchDisclosuresCalendar() {
+  if (!DART_API_KEY) return [];
+  const bgnDe = kstDateStrOffset(-7);
+  const endDe = kstDateStrOffset(0);
+  const rawRows = await fetchDartDisclosuresRaw(bgnDe, endDe);
+  const notable = filterNotableDisclosures(rawRows);
+  notable.sort((a, b) => b.date.localeCompare(a.date));
+  return notable;
 }
 
 // ============================================================================
@@ -1267,6 +1289,25 @@ module.exports = async function handler(req, res) {
     return;
   }
 
+  // 진단용: ?debugDisclosuresCalendar=1 로 호출하면 대시보드 "공시" 탭용 최근 1주일
+  // 목록만 확인합니다(Claude 호출 없음, 비용 없음, 기본은 Upstash에 쓰지 않음).
+  // ?debugDisclosuresCalendar=1&save=1 을 붙이면 대시보드가 실제로 읽는 캐시
+  // (disclosures:calendar)에도 그 자리에서 바로 저장합니다.
+  if (req.query.debugDisclosuresCalendar) {
+    try {
+      const events = await fetchDisclosuresCalendar();
+      let saved = false;
+      if (req.query.save) {
+        await redisSet("disclosures:calendar", events);
+        saved = true;
+      }
+      res.status(200).json({ hasApiKey: !!DART_API_KEY, saved, events });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+    return;
+  }
+
   // 진단용: ?debugDartRaw=1 로 호출하면 오늘 DART 공시 중 1차 필터를 통과한 후보 목록만
   // 확인합니다 (Claude 호출 없음, 비용 없음, 저장도 안 함). 화이트리스트 정규식을
   // 튜닝할 때 Claude 비용 없이 반복 확인하는 용도입니다.
@@ -1340,6 +1381,13 @@ module.exports = async function handler(req, res) {
       await redisSet("earnings:calendar", events);
     } catch (err) {
       console.warn("실적 캘린더 갱신 실패, 이 부분만 건너뜁니다:", err);
+    }
+
+    try {
+      const events = await fetchDisclosuresCalendar();
+      await redisSet("disclosures:calendar", events);
+    } catch (err) {
+      console.warn("공시 캘린더 갱신 실패, 이 부분만 건너뜁니다:", err);
     }
 
     // 채널 하나가 그날 실패해도(휴가, 형식 변경, 시황 형태 글 없음 등) 나머지
