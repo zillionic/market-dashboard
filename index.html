@@ -731,18 +731,21 @@
     return { short: pctStr, long: longStr, cls: isPos ? arrowUpClass.up : arrowUpClass.down };
   }
 
-  async function fetchKrMarket(market){
-    const res = await fetch(`${KR_SECTORS_API}?market=${market}`, { cache: "no-store" });
+  async function fetchKrMarket(market, opts = {}){
+    const compositeOnly = opts.compositeOnly ? "&compositeOnly=1" : "";
+    const res = await fetch(`${KR_SECTORS_API}?market=${market}${compositeOnly}`, { cache: "no-store" });
     if (!res.ok) throw new Error(`kr-sectors(${market}) 응답 실패: ${res.status}`);
     return res.json();
   }
 
   // ---- [국내 지수 + 업종 등락률] KRX Open API (실제 연동됨) ----
+  // 업종 TOP5/BOTTOM5(시황·히트맵)는 코스피만 쓰므로, 코스닥은 지수 카드 폴백용
+  // composite 값만 요청해서 불필요한 업종 순위 계산·응답 크기를 줄입니다.
   async function fetchKrMarketBoth(){
     try {
       const [kospiJson, kosdaqJson] = await Promise.all([
         fetchKrMarket("KOSPI"),
-        fetchKrMarket("KOSDAQ"),
+        fetchKrMarket("KOSDAQ", { compositeOnly: true }),
       ]);
       return { kospiJson, kosdaqJson };
     } catch (err) {
