@@ -1437,8 +1437,8 @@
       return `
         <div class="earn-row">
           <span class="date mono">${formatShortKoreanDate(e.date)}</span>
-          <span class="co"><span class="name">${e.name}</span><span class="ticker">${e.symbol}</span></span>
-          <span class="sector">${e.sector || ""}</span>
+          <span class="co"><span class="name">${escapeHtml(e.name)}</span><span class="ticker">${escapeHtml(e.symbol)}</span></span>
+          <span class="sector">${escapeHtml(e.sector || "")}</span>
           <span class="mcap">${mcapStr || ""}</span>
           <span class="eps">${epsHtml}</span>
         </div>
@@ -1458,7 +1458,7 @@
       return `
         <div class="macro-cal-item">
           <span class="date mono">${formatShortKoreanDate(iso)}</span>
-          <span class="name">${e.corpName}</span>
+          <span class="name">${escapeHtml(e.corpName)}</span>
           <span class="value"><span class="period mono">${e.type}</span></span>
         </div>
       `;
