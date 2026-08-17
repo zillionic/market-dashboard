@@ -1838,6 +1838,12 @@
     const next = current === "light" ? "dark" : "light";
     applyTheme(next);
     try { localStorage.setItem(THEME_STORAGE_KEY, next); } catch(err) { /* 프라이빗 브라우징 등으로 저장 실패해도 무시 */ }
+    // 업종 히트맵 타일 색은 CSS 변수가 아니라 heatTileColor()가 그 순간의 --up-rgb/--down-rgb
+    // 값을 읽어 style로 직접 박아 넣는 방식이라, data-theme만 바꿔서는 색이 안 바뀝니다
+    // (다음 자동 갱신 전까지 이전 테마 색 그대로 남아있던 버그) — 테마 전환 시 다시
+    // 그려줘서 즉시 반영되게 합니다. DATA가 아직 초기 스냅샷뿐이어도(로딩 전) render()는
+    // 그 값으로 안전하게 다시 그릴 뿐이라 문제 없습니다.
+    render();
   }
 
   /* ============================================================
