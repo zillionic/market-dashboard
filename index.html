@@ -731,9 +731,12 @@
   const BRIEFING_API = "/api/briefing";
   const KR_SECTOR_REASONS_API = "/api/kr-sector-reasons";
   const HISTORY_API = "/api/history";
-  const MACRO_CALENDAR_API = "/api/macro-calendar";
-  const EARNINGS_CALENDAR_API = "/api/earnings-calendar";
-  const DISCLOSURES_CALENDAR_API = "/api/disclosures-calendar";
+  // macro-calendar.js/earnings-calendar.js/disclosures-calendar.js가 각각 따로
+  // 있었는데, Vercel Hobby 플랜의 서버리스 함수 12개 제한에 걸려서 api/calendar.js
+  // 하나로 합쳤습니다(?type=으로 구분).
+  const MACRO_CALENDAR_API = "/api/calendar?type=macro";
+  const EARNINGS_CALENDAR_API = "/api/calendar?type=earnings";
+  const DISCLOSURES_CALENDAR_API = "/api/calendar?type=disclosures";
   const EXTRA_TICKERS_API = "/api/extra-tickers";
   const TREASURY_YIELDS_API = "/api/treasury-yields";
 
