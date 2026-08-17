@@ -217,16 +217,19 @@
     .macro-cal-item{ flex-wrap: wrap; row-gap: 4px; }
   }
 
-  /* ---------- 매크로/실적 탭 전환 ---------- */
-  .cal-tabs{ display:flex; gap:6px; margin-bottom:14px; }
+  /* ---------- 매크로/실적 탭 전환 (기본은 접힘, 탭 클릭해야 펼쳐짐) ---------- */
+  .cal-tabs{ display:flex; gap:6px; }
   .cal-tab{
     font-size:13px; font-weight:700; padding:7px 14px; border-radius:8px;
     border: 1px solid var(--line-soft); background: var(--panel-2); color: var(--ink-faint);
     cursor:pointer; transition:.15s ease; flex:1; text-align:center;
+    display:flex; align-items:center; justify-content:center; gap:6px;
   }
+  .cal-tab .chev{ font-size:9px; transition: transform 0.2s ease; }
   .cal-tab.active{ border-color: var(--gold); color: var(--gold); background: rgba(var(--gold-rgb),0.1); }
+  .cal-tab.active .chev{ transform: rotate(180deg); }
   .cal-panel{ display:none; }
-  .cal-panel.active{ display:block; }
+  .cal-panel.active{ display:block; margin-top:14px; }
 
   /* ---------- 실적 캘린더 ---------- */
   .earn-col-heads{
@@ -456,11 +459,11 @@
       <span class="eyebrow">Calendar</span>
     </div>
     <div class="cal-tabs">
-      <div class="cal-tab active" data-cal-panel="macro" onclick="selectCalTab('macro')">이번 주 매크로</div>
-      <div class="cal-tab" data-cal-panel="earnings" onclick="selectCalTab('earnings')">이번 주 실적</div>
+      <div class="cal-tab" data-cal-panel="macro" onclick="selectCalTab('macro')">이번 주 매크로 <span class="chev">▾</span></div>
+      <div class="cal-tab" data-cal-panel="earnings" onclick="selectCalTab('earnings')">이번 주 실적 <span class="chev">▾</span></div>
     </div>
 
-    <div class="cal-panel active" data-cal-panel="macro">
+    <div class="cal-panel" data-cal-panel="macro">
       <div class="macro-cal-list" id="macroCalList"></div>
     </div>
 
@@ -1359,9 +1362,13 @@
     }).join("");
   }
 
+  // 기본은 접힌 상태(둘 다 active 없음). 탭을 누르면 그 탭만 펼쳐지고, 펼쳐진 탭을
+  // 다시 누르면 접힙니다.
   function selectCalTab(panel){
-    document.querySelectorAll(".cal-tab").forEach(t => t.classList.toggle("active", t.dataset.calPanel === panel));
-    document.querySelectorAll(".cal-panel").forEach(p => p.classList.toggle("active", p.dataset.calPanel === panel));
+    const tab = document.querySelector(`.cal-tab[data-cal-panel="${panel}"]`);
+    const nextPanel = (tab && tab.classList.contains("active")) ? null : panel;
+    document.querySelectorAll(".cal-tab").forEach(t => t.classList.toggle("active", t.dataset.calPanel === nextPanel));
+    document.querySelectorAll(".cal-panel").forEach(p => p.classList.toggle("active", p.dataset.calPanel === nextPanel));
   }
 
   // 크론(api/cron-briefing.js)이 마지막으로 성공한 시각을 보여줘서, 며칠째 안 돌고 있는데
