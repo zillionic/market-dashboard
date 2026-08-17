@@ -561,7 +561,7 @@
        자동 반영됩니다(주말은 별도 추가 없이 자동 판별).
      ============================================================ */
   const KR_HOLIDAYS = [
-    // 'YYYY-MM-DD' 형식으로 추가. 예: "2026-09-24" (추석)
+    "2026-08-17", // 광복절(8/15, 토) 대체공휴일
   ];
 
   function isMarketHoliday(date){
@@ -877,7 +877,9 @@
     const krBadge = document.getElementById("krMarketBadge");
 
     let krLabel;
-    if (krMarketState === "REGULAR") {
+    // Yahoo가 marketState를 REGULAR로 잘못 보고할 때가 있어(대체휴일 등 KRX 자체 휴장일을
+    // 못 알아채는 경우), KR_HOLIDAYS 기준으로 한 번 더 걸러줍니다.
+    if (krMarketState === "REGULAR" && !isMarketHoliday(new Date())) {
       krLabel = "장중";
       if (krBadge) { krBadge.textContent = "장중"; krBadge.className = "badge live"; }
     } else if (krIndexAsOfDate) {
