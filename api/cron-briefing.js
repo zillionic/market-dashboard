@@ -396,7 +396,10 @@ async function fetchFinnhubMarketCap(symbol) {
 
 const MAX_NEW_MARKETCAP_LOOKUPS = 30; // 캐시에 없는 신규 종목에 대해서만, 하루 최대 이만큼만 새로 조회
 
-async function fetchEarningsCalendar() {
+// persistMcapCache=false면 시총 캐시(earnings:marketcap)를 Redis에 쓰지 않습니다
+// (?debugEarnings=1을 &save=1 없이 호출했을 때 "Upstash에 아무것도 안 씀"이 실제로
+// 지켜지도록 — 예전엔 이 캐시만 조건 없이 항상 저장돼서 주석과 실제 동작이 달랐습니다).
+async function fetchEarningsCalendar(persistMcapCache = true) {
   if (!FINNHUB_API_KEY) return [];
 
   // 매크로 캘린더와 같은 규칙: 지난 영업일(전일, 주말이면 그 전 금요일)부터 오늘+5일까지.
@@ -420,16 +423,18 @@ async function fetchEarningsCalendar() {
   }
 
   // 시총 캐시에 없는 종목만, 하루 상한 안에서 새로 조회합니다(나머지는 다음날 자동으로 채워짐).
+  // Finnhub 분당 60콜 한도 안에서 동시에 조회해서(최대 30개) 크론 실행 시간을 줄입니다
+  // (예전엔 순차 호출이라 시총 조회만으로 최대 몇 초씩 걸렸습니다).
   const missing = filtered.filter((e) => !mcapCache[e.symbol]).slice(0, MAX_NEW_MARKETCAP_LOOKUPS);
-  for (const e of missing) {
+  await Promise.all(missing.map(async (e) => {
     try {
       const mcap = await fetchFinnhubMarketCap(e.symbol);
       if (mcap !== null) mcapCache[e.symbol] = { value: mcap, updatedAt: new Date().toISOString() };
     } catch (err) {
       console.warn(`Finnhub 시총 조회 실패, 건너뜀 (${e.symbol}):`, err);
     }
-  }
-  if (missing.length > 0) {
+  }));
+  if (missing.length > 0 && persistMcapCache) {
     try { await redisSet("earnings:marketcap", mcapCache); } catch (err) { console.warn("시총 캐시 저장 실패:", err); }
   }
 
@@ -835,7 +840,7 @@ function filterNotableDisclosures(rows) {
     if (!title || DART_AMENDMENT_TITLE_PATTERN.test(title)) continue;
     const hit = DART_NOTABLE_PATTERNS.find((p) => p.pattern.test(title));
     if (!hit) continue;
-    const dedupeKey = `${r.corp_code}|${hit.label}`;
+    const dedupeKey = `${r.rcept_dt}|${r.corp_code}|${hit.label}`;
     if (seen.has(dedupeKey)) continue;
     seen.add(dedupeKey);
     result.push({ date: r.rcept_dt, corpName: r.corp_name, corpCode: r.corp_code, title, type: hit.label, rceptNo: r.rcept_no });
@@ -1494,7 +1499,7 @@ module.exports = async function handler(req, res) {
   // 그 자리에서 바로 저장합니다.
   if (req.query.debugEarnings) {
     try {
-      const events = await fetchEarningsCalendar();
+      const events = await fetchEarningsCalendar(!!req.query.save);
       let saved = false;
       if (req.query.save) {
         await redisSet("earnings:calendar", events);
@@ -1640,9 +1645,14 @@ module.exports = async function handler(req, res) {
       console.warn("실적 캘린더 갱신 실패, 이 부분만 건너뜁니다:", err);
     }
 
+    // 이 주의 공시 목록을 밖(notableDisclosuresThisWeek)에도 남겨둬서, 아래 노션용
+    // 공시 요약이 오늘자 데이터를 DART에서 또 한 번 가져오지 않고 재사용하게 합니다
+    // (예전엔 여기서 7일치를 가져오고, 노션 블록에서 오늘 하루치를 또 따로 가져와서
+    // 같은 날짜 데이터를 DART에 두 번 요청했습니다).
+    let notableDisclosuresThisWeek = [];
     try {
-      const events = await fetchDisclosuresCalendar();
-      await redisSet("disclosures:calendar", events);
+      notableDisclosuresThisWeek = await fetchDisclosuresCalendar();
+      await redisSet("disclosures:calendar", notableDisclosuresThisWeek);
     } catch (err) {
       console.warn("공시 캘린더 갱신 실패, 이 부분만 건너뜁니다:", err);
     }
@@ -1751,7 +1761,9 @@ module.exports = async function handler(req, res) {
         try {
           let disclosureSummaries = [];
           try {
-            disclosureSummaries = await fetchAndSummarizeDisclosures(todayKSTCompact());
+            // 위에서 이미 가져온 이번 주 공시 중 오늘자만 추려서 재사용합니다(DART 재조회 없음).
+            const todayNotable = notableDisclosuresThisWeek.filter((d) => d.date === todayKSTCompact());
+            disclosureSummaries = await generateDisclosureSummaries(todayNotable);
           } catch (err) {
             console.warn("공시 요약 생성 실패, 이 부분만 건너뜁니다:", err);
           }
