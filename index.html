@@ -133,6 +133,8 @@
   }
   .market-status.open{ color: var(--ink-dim); }
   .market-status.closed{ color: var(--gold); font-weight: 600; }
+  /* 실시간 갱신 중 일부 API 호출이 실패해 이전 값을 그대로 표시할 때만 나타납니다(평소엔 빈 텍스트) */
+  .live-warn{ font-size: 10.5px; color: var(--gold); font-weight: 600; margin-top: 5px; max-width: 220px; text-align: right; }
   .badge{
     display:inline-block; font-size:10.5px; padding:2px 8px; border-radius:999px;
     margin-top:5px; font-family:'JetBrains Mono', monospace; letter-spacing:0.03em;
@@ -435,6 +437,7 @@
       <div class="market-status" id="marketStatus"></div>
       <div class="date" id="updatedAt" style="margin-top:4px;">-</div>
       <span class="badge" id="modeBadge">-</span>
+      <div class="live-warn" id="liveDataWarn"></div>
     </div>
   </header>
 
@@ -960,11 +963,13 @@
         [...DATA.kr.sectorsTop, ...DATA.kr.sectorsBottom].forEach(s => {
           if (reasonMap[s.name]) s.reason = reasonMap[s.name];
         });
-      } else {
-        console.warn("kr-sector-reasons API 응답 실패:", res.status);
+        return true;
       }
+      console.warn("kr-sector-reasons API 응답 실패:", res.status);
+      return false;
     } catch (err) {
       console.warn("업종 이유 온디맨드 보완 실패, 기존 값을 유지합니다:", err);
+      return false;
     }
   }
 
@@ -1101,20 +1106,34 @@
   // 순서만 기존과 동일하게 유지합니다(예: Yahoo 지수 값이 항상 KRX 값 위에 마지막으로
   // 덮어써야 하는 것처럼). 국내 업종 이유 온디맨드 보완만 최종 업종 목록이 필요해서 예외적으로
   // 나머지가 다 끝난 뒤 마지막에 따로 호출합니다.
+  // 각 fetch*Raw()는 실패 시 null을 반환합니다(콘솔 경고만 남기고 이전 값 유지).
+  // 여기서 실패한 항목 이름을 모아뒀다가 상단에 옅은 경고로 보여줘서, "화면은 그대로인데
+  // 사실 최신값이 아닌" 상태를 사용자가 알아챌 수 있게 합니다.
+  const LIVE_FETCH_LABELS = ["국내 지수·업종", "국내 등락 비율", "해외 지수", "국내 지수·환율", "시황 코멘트", "추이 차트", "매크로 캘린더", "원자재·VIX", "국채 금리", "실적 캘린더"];
+
+  function renderLiveDataWarn(failedLabels){
+    const el = document.getElementById("liveDataWarn");
+    if(!el) return;
+    el.textContent = failedLabels.length > 0
+      ? `⚠ 갱신 실패: ${failedLabels.join(", ")} (이전 값 표시 중)`
+      : "";
+  }
+
   async function fetchLiveData(){
-    const [krMarketResult, breadthJson, usIndicesJson, krIndicesJson, briefingJson, historyJson, macroJson, extraTickersJson, treasuryYieldsJson, earningsJson] =
-      await Promise.all([
-        fetchKrMarketBoth(),
-        fetchBreadthRaw(),
-        fetchUsIndicesRaw(),
-        fetchKrIndicesRaw(),
-        fetchBriefingRaw(),
-        fetchHistoryRaw(),
-        fetchMacroRaw(),
-        fetchExtraTickersRaw(),
-        fetchTreasuryYieldsRaw(),
-        fetchEarningsRaw(),
-      ]);
+    const results = await Promise.all([
+      fetchKrMarketBoth(),
+      fetchBreadthRaw(),
+      fetchUsIndicesRaw(),
+      fetchKrIndicesRaw(),
+      fetchBriefingRaw(),
+      fetchHistoryRaw(),
+      fetchMacroRaw(),
+      fetchExtraTickersRaw(),
+      fetchTreasuryYieldsRaw(),
+      fetchEarningsRaw(),
+    ]);
+    const [krMarketResult, breadthJson, usIndicesJson, krIndicesJson, briefingJson, historyJson, macroJson, extraTickersJson, treasuryYieldsJson, earningsJson] = results;
+    const failedLabels = LIVE_FETCH_LABELS.filter((_, i) => results[i] === null);
 
     const { krBasDd } = applyKrMarket(krMarketResult);
     applyBreadth(breadthJson);
@@ -1128,7 +1147,9 @@
     applyMacro(macroJson);
     applyEarnings(earningsJson);
 
-    await fetchAndApplyKrSectorReasons();
+    const sectorReasonsOk = await fetchAndApplyKrSectorReasons();
+    if (!sectorReasonsOk) failedLabels.push("업종 상세 사유");
+    renderLiveDataWarn(failedLabels);
   }
 
 
