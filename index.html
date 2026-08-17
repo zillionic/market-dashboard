@@ -312,6 +312,12 @@
   .index-card .name{ font-size:12px; color:var(--ink-dim); margin-bottom:6px; }
   .index-card .value{ font-size:22px; font-weight:700; letter-spacing:-0.01em; }
   .index-card .delta{ font-size:13px; margin-top:3px; font-weight:600; white-space:nowrap; }
+  .index-card .period{
+    font-size:10.5px; margin-top:6px; padding-top:6px; border-top:1px solid var(--line-soft);
+    display:flex; gap:8px; white-space:nowrap;
+  }
+  .index-card .period .lbl{ color:var(--ink-faint); }
+  .index-card .period .val{ font-weight:700; }
 
   /* 등락 종목 비율 막대 (국내만 라이브 데이터가 있어 국내에만 적용) */
   .breadth-bars{ display:flex; flex-direction:column; gap:8px; margin-bottom:16px; }
@@ -1368,12 +1374,39 @@
     el.className = hoursAgo > 48 ? "stale" : "";
   }
 
+  // 이미 20거래일 추이 차트용으로 쌓아둔 종가 기록을 그대로 재사용해서, 새 API 없이
+  // 1주(5거래일 전 대비)·1개월(20거래일 전 대비) 등락률을 계산합니다. 데이터가 그만큼
+  // 안 쌓였으면(예: 최근 추가된 VIX·국채금리) 해당 구간을 조용히 생략합니다.
+  function computePeriodReturns(history){
+    if(!Array.isArray(history) || history.length < 6) return null;
+    const n = history.length;
+    const latest = history[n - 1].close;
+    const result = { week: (latest - history[n - 6].close) / history[n - 6].close * 100 };
+    if(n >= 20) result.month = (latest - history[n - 20].close) / history[n - 20].close * 100;
+    return result;
+  }
+  function fmtPeriodPct(pct, panel){
+    const cls = pct >= 0 ? `up-${panel}` : `down-${panel}`;
+    return `<span class="val ${cls}">${pct >= 0 ? "▲" : "▼"}${fmtNum(Math.abs(pct), 1)}%</span>`;
+  }
+  function renderPeriodReturns(history, panel){
+    const pr = computePeriodReturns(history);
+    if(!pr) return "";
+    return `
+      <div class="period mono">
+        <span class="lbl">1W</span>${fmtPeriodPct(pr.week, panel)}
+        ${pr.month != null ? `<span class="lbl">1M</span>${fmtPeriodPct(pr.month, panel)}` : ""}
+      </div>`;
+  }
+
   function renderIndexRow(elId, indices, panel){
+    const history = DATA[panel].history || {};
     document.getElementById(elId).innerHTML = indices.map(i => `
       <div class="index-card ${selectedTrend[panel] === i.name ? 'active' : ''}" onclick="selectTrendIndex('${panel}','${i.name}')">
         <div class="name">${i.name}</div>
         <div class="value mono">${i.value}</div>
         <div class="delta mono ${i.cls}">${i.delta}</div>
+        ${renderPeriodReturns(history[i.name], panel)}
       </div>
     `).join("");
   }
