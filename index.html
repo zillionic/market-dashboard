@@ -224,7 +224,7 @@
   }
   .macro-cal-col-heads .h-date{ width:76px; flex-shrink:0; margin-right:8px; }
   .macro-cal-col-heads .h-name{ flex:1; }
-  .macro-cal-col-heads .h-value{ flex-shrink:0; text-align:right; }
+  .macro-cal-col-heads .h-value{ flex-shrink:0; min-width:74px; text-align:right; }
   .macro-cal-list{
     display:flex; flex-direction:column; gap:7px;
     max-height: 158px; overflow-y:auto;
@@ -244,7 +244,7 @@
     white-space:nowrap; width:76px; flex-shrink:0; margin-right:8px;
   }
   .macro-cal-item .name{ flex:1; color: var(--ink); min-width:0; }
-  .macro-cal-item .value{ display:flex; align-items:center; gap:6px; flex-shrink:0; }
+  .macro-cal-item .value{ display:flex; align-items:center; gap:6px; flex-shrink:0; min-width:74px; justify-content:flex-end; }
   .macro-cal-item .period{
     font-size: 10.5px; font-weight:700; color: var(--ink-faint);
     border: 1px solid var(--line-soft); border-radius: 4px; padding: 1px 5px; white-space:nowrap;
@@ -300,7 +300,7 @@
   .earn-col-heads .h-co{ flex:1; }
   .earn-col-heads .h-sector{ width:76px; flex-shrink:0; display:none; }
   .earn-col-heads .h-mcap{ width:64px; flex-shrink:0; display:none; margin-right:8px; }
-  .earn-col-heads .h-eps{ width:150px; flex-shrink:0; }
+  .earn-col-heads .h-eps{ width:150px; flex-shrink:0; text-align:right; }
 
   /* 실적 시즌엔 한 주에 발표하는 종목이 많아져서 세로로 너무 길어질 수 있어서,
      매크로/공시/뉴스와 같은 높이로 잘라두고 그 이상은 스크롤로 봅니다. 다른 탭은
@@ -334,7 +334,7 @@
     font-family:'JetBrains Mono', monospace; font-size:12.5px; font-weight:700; color: var(--ink-dim);
     white-space:nowrap; display:none; width:64px; flex-shrink:0; text-align:right; margin-right:8px;
   }
-  .earn-row .eps{ font-family:'JetBrains Mono', monospace; white-space:nowrap; width:150px; flex-shrink:0; }
+  .earn-row .eps{ font-family:'JetBrains Mono', monospace; white-space:nowrap; width:150px; flex-shrink:0; text-align:right; }
   .earn-row .eps .label{ font-size:10px; color: var(--ink-faint); display:block; margin-bottom:1px; }
   .earn-row .eps .val{ font-weight:700; }
   .earn-row .eps .val.beat{ color: var(--us-up); }
@@ -551,7 +551,7 @@
       <div class="macro-cal-col-heads">
         <span class="h-date">날짜</span>
         <span class="h-name">지표</span>
-        <span class="h-value">값</span>
+        <span class="h-value">발표치</span>
       </div>
       <div class="macro-cal-list" id="macroCalList"></div>
     </div>
@@ -1503,9 +1503,9 @@
         const estStr = hasEst ? ` (예상 $${e.epsEstimate.toFixed(2)})` : "";
         epsHtml = `<span class="label">EPS 실적</span><span class="val ${cls}">$${e.epsActual.toFixed(2)}${estStr}</span>`;
       } else if(Number.isFinite(e.epsEstimate)){
-        epsHtml = `<span class="label">발표 예정</span><span class="val pending">컨센서스 $${e.epsEstimate.toFixed(2)}</span>`;
+        epsHtml = `<span class="label">발표 예정</span><span class="val pending">예상 $${e.epsEstimate.toFixed(2)}</span>`;
       } else {
-        epsHtml = `<span class="label">발표 예정</span><span class="val pending">컨센서스 없음</span>`;
+        epsHtml = `<span class="label">발표 예정</span><span class="val pending">예상치 없음</span>`;
       }
       return `
         <div class="earn-row">
