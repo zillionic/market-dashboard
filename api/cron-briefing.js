@@ -1019,6 +1019,25 @@ async function fetchFinnhubGeneralNews() {
   return Array.isArray(json) ? json : [];
 }
 
+// Finnhub category=general은 "시장 뉴스"가 아니라 로이터 국제 와이어 전체(지정학·전쟁·
+// 외교 등)를 그대로 줘서, 국내(검색어로 이미 관련성이 걸러지는 네이버)와 달리 관련성
+// 필터가 전혀 없었습니다. 실제로 ?debugNews=1로 확인해보니 Claude가 "시장과 무관한 건
+// 제외"하라고 해도 후보 풀에 진짜 시장 뉴스가 적어서 외교·군사 이슈까지 최종 5개에
+// 섞여 들어오는 문제가 있었습니다. 헤드라인에 아래 키워드가 하나도 없으면 애초에
+// 후보에서 제외해서, 국내처럼 "관련성 있는 후보만 Claude에게 넘기는" 구조로 맞춥니다.
+const US_NEWS_KEYWORDS = [
+  "stock", "shares", "equit", "market", "s&p", "nasdaq", "dow jones",
+  "wall street", "fed", "federal reserve", "rate cut", "rate hike", "interest rate",
+  "inflation", "cpi", "ppi", "gdp", "jobs report", "unemployment", "payroll",
+  "earnings", "eps", "revenue", "guidance", "ipo", "merger", "acquisition",
+  "buyback", "dividend", "tariff", "trade deal", "oil price", "crude", "opec",
+  "treasury", "yield", "bond",
+];
+function isUsNewsRelevant(headline) {
+  const lower = headline.toLowerCase();
+  return US_NEWS_KEYWORDS.some((kw) => lower.includes(kw));
+}
+
 async function fetchUsNewsCandidates() {
   if (!FINNHUB_API_KEY) return [];
   const items = await fetchFinnhubGeneralNews();
@@ -1027,6 +1046,7 @@ async function fetchUsNewsCandidates() {
   const candidates = [];
   for (const it of items) {
     if (!it.headline || !it.url || !Number.isFinite(it.datetime)) continue;
+    if (!isUsNewsRelevant(it.headline)) continue;
     const pubDate = new Date(it.datetime * 1000);
     if (!isWithinLookbackHours(pubDate, NEWS_LOOKBACK_HOURS)) continue;
     const key = normalizeNewsTitle(it.headline);
