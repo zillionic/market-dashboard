@@ -17,7 +17,7 @@
     --ink:#e9ecf1;
     --ink-dim:#8c93a3;
     --ink-dim-rgb:140,147,163;
-    --ink-faint:#5a6070;
+    --ink-faint:#7e8494; /* --bg/--panel/--panel-2 대비 명암비 4.5:1 이상(WCAG AA) 유지되는 값 */
     --gold:#c9a227;
     --gold-rgb:201,162,39;
     --kr-up:#2fa84f;
@@ -39,7 +39,7 @@
     --ink:#10141c;
     --ink-dim:#4d5566;
     --ink-dim-rgb:77,85,102;
-    --ink-faint:#868f9e;
+    --ink-faint:#646d7c; /* --panel(#fff)/--bg 대비 명암비 4.5:1 이상(WCAG AA) 유지되는 값 */
     --gold:#2f6fed;
     --gold-rgb:47,111,237;
     --kr-up:#1f7a3d;
@@ -264,16 +264,19 @@
   .cal-tab:hover{ border-color: var(--gold); }
   .cal-tab.active{ border-color: var(--gold); color: var(--gold); background: rgba(var(--gold-rgb),0.1); }
   .cal-tab.active .chev{ transform: rotate(180deg); }
+  .cal-tab:focus-visible, .index-card:focus-visible{
+    outline: 2px solid var(--gold); outline-offset: 2px;
+  }
   /* 탭이 3개 이상이면 "이번 주 " 접두어까지 넣었을 때 좁은 화면에서 단어 중간에
      줄바꿈되므로, 그 폭에서는 접두어를 빼고 "매크로"/"실적"/"공시"/"뉴스"만 보여줍니다.
      (한때 탭을 내용 폭만큼만 차지하게 하고 가로 스크롤시키는 방식도 써봤는데,
      "매크로"만 유독 넓어 보이고 탭 4개가 한쪽으로 쏠려 보이는 문제가 있어서,
      대신 패딩·글자 크기를 좁혀 4개 모두 균등폭(flex:1)을 유지한 채 한 줄에
-     들어가게 했습니다.) */
+     들어가게 했습니다. min-height는 애플/구글 권장 최소 터치 영역(44px)에 맞춘 값.) */
   @media (max-width: 480px){
     .cal-tab .tab-prefix{ display:none; }
     .cal-tabs{ gap: 4px; }
-    .cal-tab{ padding: 7px 2px; font-size: 11.5px; gap: 3px; }
+    .cal-tab{ padding: 7px 2px; font-size: 11.5px; gap: 3px; min-height: 44px; }
     .cal-tab .chev{ font-size: 8px; }
   }
   .cal-panel{ display:none; }
@@ -507,26 +510,26 @@
     <div class="macro-cal-head">
       <span class="eyebrow">Calendar</span>
     </div>
-    <div class="cal-tabs">
-      <div class="cal-tab" data-cal-panel="news" onclick="selectCalTab('news')">뉴스 <span class="chev">▾</span></div>
-      <div class="cal-tab" data-cal-panel="disclosures" onclick="selectCalTab('disclosures')">공시 <span class="chev">▾</span></div>
-      <div class="cal-tab" data-cal-panel="macro" onclick="selectCalTab('macro')"><span class="tab-prefix">이번 주 </span>매크로 <span class="chev">▾</span></div>
-      <div class="cal-tab" data-cal-panel="earnings" onclick="selectCalTab('earnings')"><span class="tab-prefix">이번 주 </span>실적 <span class="chev">▾</span></div>
+    <div class="cal-tabs" role="tablist">
+      <div class="cal-tab" data-cal-panel="news" role="tab" tabindex="0" aria-selected="false" onclick="selectCalTab('news')">뉴스 <span class="chev">▾</span></div>
+      <div class="cal-tab" data-cal-panel="disclosures" role="tab" tabindex="0" aria-selected="false" onclick="selectCalTab('disclosures')">공시 <span class="chev">▾</span></div>
+      <div class="cal-tab" data-cal-panel="macro" role="tab" tabindex="0" aria-selected="false" onclick="selectCalTab('macro')"><span class="tab-prefix">이번 주 </span>매크로 <span class="chev">▾</span></div>
+      <div class="cal-tab" data-cal-panel="earnings" role="tab" tabindex="0" aria-selected="false" onclick="selectCalTab('earnings')"><span class="tab-prefix">이번 주 </span>실적 <span class="chev">▾</span></div>
     </div>
 
-    <div class="cal-panel" data-cal-panel="news">
+    <div class="cal-panel" data-cal-panel="news" role="tabpanel">
       <div class="macro-cal-list" id="newsCalList"></div>
     </div>
 
-    <div class="cal-panel" data-cal-panel="disclosures">
+    <div class="cal-panel" data-cal-panel="disclosures" role="tabpanel">
       <div class="macro-cal-list" id="disclosuresCalList"></div>
     </div>
 
-    <div class="cal-panel" data-cal-panel="macro">
+    <div class="cal-panel" data-cal-panel="macro" role="tabpanel">
       <div class="macro-cal-list" id="macroCalList"></div>
     </div>
 
-    <div class="cal-panel" data-cal-panel="earnings">
+    <div class="cal-panel" data-cal-panel="earnings" role="tabpanel">
       <div class="earn-col-heads">
         <span class="h-date">날짜</span>
         <span class="h-co">종목</span>
@@ -1538,9 +1541,23 @@
   function selectCalTab(panel){
     const tab = document.querySelector(`.cal-tab[data-cal-panel="${panel}"]`);
     const nextPanel = (tab && tab.classList.contains("active")) ? null : panel;
-    document.querySelectorAll(".cal-tab").forEach(t => t.classList.toggle("active", t.dataset.calPanel === nextPanel));
+    document.querySelectorAll(".cal-tab").forEach(t => {
+      const selected = t.dataset.calPanel === nextPanel;
+      t.classList.toggle("active", selected);
+      t.setAttribute("aria-selected", selected ? "true" : "false");
+    });
     document.querySelectorAll(".cal-panel").forEach(p => p.classList.toggle("active", p.dataset.calPanel === nextPanel));
   }
+
+  // cal-tab(캘린더 탭)·index-card(지수 카드)는 div+onclick이라 기본적으로 키보드 포커스가
+  // 안 잡히므로 tabindex="0"을 부여했고, 여기서 Enter/Space로도 클릭과 동일하게 동작하게 합니다.
+  document.addEventListener("keydown", (e) => {
+    if(e.key !== "Enter" && e.key !== " ") return;
+    const el = e.target.closest(".cal-tab, .index-card");
+    if(!el) return;
+    e.preventDefault();
+    el.click();
+  });
 
   // 크론(api/cron-briefing.js)이 마지막으로 성공한 시각을 보여줘서, 며칠째 안 돌고 있는데
   // 아무도 모르는 상황을 막습니다. 48시간 이상 지나면(주말 하루 건너뛰는 정상 주기보다 김) 강조 표시.
@@ -1583,7 +1600,7 @@
   function renderIndexRow(elId, indices, panel){
     const history = DATA[panel].history || {};
     document.getElementById(elId).innerHTML = indices.map(i => `
-      <div class="index-card ${selectedTrend[panel] === i.name ? 'active' : ''}" onclick="selectTrendIndex('${panel}','${i.name}')">
+      <div class="index-card ${selectedTrend[panel] === i.name ? 'active' : ''}" role="button" tabindex="0" aria-pressed="${selectedTrend[panel] === i.name}" onclick="selectTrendIndex('${panel}','${i.name}')">
         <div class="name">${i.name}</div>
         <div class="value mono">${i.value}</div>
         <div class="delta mono ${i.cls}">${i.delta}</div>
