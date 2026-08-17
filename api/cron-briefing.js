@@ -550,10 +550,22 @@ function toBasDd(d) {
   return `${y}${m}${dd}`;
 }
 
+const KR_MARKET_CLOSE_HOUR = 15;
+const KR_MARKET_CLOSE_MINUTE = 30; // 코스피 정규장 마감 15:30 KST
+
 // 오늘부터 하루씩 거슬러 올라가며 시도할 날짜 후보 목록 (주말은 건너뜀, KRX 데이터 처리 지연 대비).
+// 업종 시황은 항상 "마감 기준"만 쓰므로, 오늘 장이 아직 안 끝났으면 오늘 날짜는 후보에서
+// 빼고 전 거래일부터 찾습니다 (api/kr-sectors.js의 candidateDates()와 동일한 규칙).
 function krxCandidateDates(maxDays = 7) {
+  const nowKST = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
+  const marketClosedToday =
+    nowKST.getHours() > KR_MARKET_CLOSE_HOUR ||
+    (nowKST.getHours() === KR_MARKET_CLOSE_HOUR && nowKST.getMinutes() >= KR_MARKET_CLOSE_MINUTE);
+
+  const d = nowKST;
+  if (!marketClosedToday) d.setDate(d.getDate() - 1);
+
   const dates = [];
-  const d = new Date();
   while (dates.length < maxDays) {
     const day = d.getDay();
     if (day !== 0 && day !== 6) dates.push(toBasDd(d));

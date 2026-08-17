@@ -62,12 +62,25 @@ function toBasDd(d) {
   return `${y}${m}${dd}`;
 }
 
-// 오늘부터 하루씩 거슬러 올라가며 시도할 날짜 후보 목록 생성 (주말은 건너뜀).
-// TODO: 한국 공휴일까지 완벽히 거르려면 공휴일 목록을 추가해 skip 조건에 넣어주세요.
-// 공휴일은 목록에 없어도 어차피 그날 KRX 데이터가 비어있을 것이므로 자동으로 스킵됩니다.
+const KR_MARKET_CLOSE_HOUR = 15;
+const KR_MARKET_CLOSE_MINUTE = 30; // 코스피·코스닥 정규장 마감 15:30 KST
+
+// 업종 TOP5/BOTTOM5는 항상 "마감 기준"으로만 보여줍니다. 오늘 장이 아직 안 끝났으면
+// (KRX가 그날 누적치를 장중에도 올려주는 경우가 있어) 오늘 날짜는 후보에서 아예 빼고
+// 전 거래일부터 찾습니다. 오늘 장이 끝났으면(15:30 KST 이후) 오늘부터 시도합니다.
+// 주말은 건너뜀. TODO: 한국 공휴일까지 완벽히 거르려면 공휴일 목록을 추가해 skip 조건에
+// 넣어주세요. 공휴일은 목록에 없어도 어차피 그날 KRX 데이터가 비어있을 것이므로 자동으로
+// 스킵됩니다.
 function candidateDates(maxDays = 7) {
+  const nowKST = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
+  const marketClosedToday =
+    nowKST.getHours() > KR_MARKET_CLOSE_HOUR ||
+    (nowKST.getHours() === KR_MARKET_CLOSE_HOUR && nowKST.getMinutes() >= KR_MARKET_CLOSE_MINUTE);
+
+  const d = nowKST;
+  if (!marketClosedToday) d.setDate(d.getDate() - 1);
+
   const dates = [];
-  const d = new Date();
   while (dates.length < maxDays) {
     const day = d.getDay(); // 0=일 6=토
     if (day !== 0 && day !== 6) dates.push(toBasDd(d));
@@ -138,19 +151,25 @@ module.exports = async function handler(req, res) {
         }
       : null;
 
-    const sectors = rows
-      .filter((r) => r.IDX_NM && !isCompositeOrSizeIndex(r.IDX_NM))
-      .map((r) => ({
-        name: r.IDX_NM.trim(),
-        pct: Number(r.FLUC_RT),
-        close: Number(r.CLSPRC_IDX),
-      }))
-      .filter((r) => !Number.isNaN(r.pct));
+    // 대시보드는 코스피 업종만 시황(TOP5/BOTTOM5)에 쓰고, 코스닥은 지수 카드 폴백용
+    // composite 값만 필요해서 ?compositeOnly=1로 부르면 업종 순위 계산을 건너뜁니다.
+    const compositeOnly = req.query.compositeOnly === "1";
+    let sectors = [], top5 = [], bottom5 = [];
+    if (!compositeOnly) {
+      sectors = rows
+        .filter((r) => r.IDX_NM && !isCompositeOrSizeIndex(r.IDX_NM))
+        .map((r) => ({
+          name: r.IDX_NM.trim(),
+          pct: Number(r.FLUC_RT),
+          close: Number(r.CLSPRC_IDX),
+        }))
+        .filter((r) => !Number.isNaN(r.pct));
 
-    sectors.sort((a, b) => b.pct - a.pct);
+      sectors.sort((a, b) => b.pct - a.pct);
 
-    const top5 = sectors.slice(0, 5);
-    const bottom5 = sectors.slice(-5).reverse();
+      top5 = sectors.slice(0, 5);
+      bottom5 = sectors.slice(-5).reverse();
+    }
 
     // 1시간 캐시 — 하루 여러 번 눌러도 KRX 호출 횟수(일 10,000회 제한)를 아낍니다.
     res.setHeader("Cache-Control", "s-maxage=3600, stale-while-revalidate=600");
