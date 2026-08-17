@@ -40,9 +40,22 @@ function toBasDd(d) {
   return `${y}${m}${dd}`;
 }
 
+const KR_MARKET_CLOSE_HOUR = 15;
+const KR_MARKET_CLOSE_MINUTE = 30; // 코스피·코스닥 정규장 마감 15:30 KST
+
+// 상승/하락 종목 수도 kr-sectors.js의 업종 TOP5/BOTTOM5와 동일하게 항상 "마감 기준"으로만
+// 보여줍니다(둘 다 같은 히트맵 패널에 나란히 표시되므로 시점이 어긋나면 안 됨). 오늘 장이
+// 아직 안 끝났으면 오늘 날짜는 후보에서 빼고 전 거래일부터 찾습니다.
 function candidateDates(maxDays = 7) {
+  const nowKST = new Date(new Date().toLocaleString("en-US", { timeZone: "Asia/Seoul" }));
+  const marketClosedToday =
+    nowKST.getHours() > KR_MARKET_CLOSE_HOUR ||
+    (nowKST.getHours() === KR_MARKET_CLOSE_HOUR && nowKST.getMinutes() >= KR_MARKET_CLOSE_MINUTE);
+
+  const d = nowKST;
+  if (!marketClosedToday) d.setDate(d.getDate() - 1);
+
   const dates = [];
-  const d = new Date();
   while (dates.length < maxDays) {
     const day = d.getDay();
     if (day !== 0 && day !== 6) dates.push(toBasDd(d));
