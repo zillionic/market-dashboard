@@ -45,12 +45,32 @@
 const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
 const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 
+// 외부 API 하나가 응답 없이 멈추면(타임아웃 없는 fetch는 Node에서 응답이 올 때까지
+// 무한정 대기) 이 함수 전체(maxDuration 60초)가 그대로 타임아웃으로 죽어서, 이번
+// 실행에서 다루는 모든 데이터(국내/해외 시황·지수·업종·캘린더)가 통째로 갱신
+// 안 되는 사고가 실제로 있었습니다(2026-08-18 아침 크론, FUNCTION_INVOCATION_TIMEOUT).
+// 모든 외부 호출에 AbortController 기반 타임아웃을 걸어서, 하나가 멈춰도 그 호출만
+// 실패 처리되고(대부분 이미 try/catch로 감싸져 있어 기존 값 유지로 폴백) 나머지는
+// 계속 진행되게 합니다.
+async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: controller.signal });
+  } catch (err) {
+    if (err.name === "AbortError") throw new Error(`요청 타임아웃(${timeoutMs}ms): ${url}`);
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function redisSet(key, valueObj) {
-  const res = await fetch(`${UPSTASH_URL}/set/${encodeURIComponent(key)}`, {
+  const res = await fetchWithTimeout(`${UPSTASH_URL}/set/${encodeURIComponent(key)}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` },
     body: JSON.stringify(valueObj),
-  });
+  }, 8000);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`Upstash 저장 실패 (${res.status}): ${text} | url=${UPSTASH_URL} tokenLen=${(UPSTASH_TOKEN||"").length}`);
@@ -58,9 +78,9 @@ async function redisSet(key, valueObj) {
 }
 
 async function redisGet(key) {
-  const res = await fetch(`${UPSTASH_URL}/get/${encodeURIComponent(key)}`, {
+  const res = await fetchWithTimeout(`${UPSTASH_URL}/get/${encodeURIComponent(key)}`, {
     headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` },
-  });
+  }, 8000);
   if (!res.ok) throw new Error(`Upstash 조회 실패 (${key}, ${res.status})`);
   const json = await res.json();
   return json.result ? JSON.parse(json.result) : null;
@@ -94,9 +114,9 @@ async function appendIndexHistory(historyKey, dateStr, close) {
 //  전혀 안 쌓이는 문제가 있었습니다. 외부 API를 직접 호출하면 이 문제와 무관해집니다.)
 async function fetchYahooQuote(symbol) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`;
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-  });
+  }, 8000);
   if (!res.ok) throw new Error(`Yahoo Finance 응답 실패 (${symbol}, ${res.status})`);
   const json = await res.json();
   const meta = json?.chart?.result?.[0]?.meta;
@@ -214,7 +234,7 @@ function periodLabel(releaseDate, offsetMonths) {
 async function fetchFredObservations(seriesId, unitsParam) {
   const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${encodeURIComponent(seriesId)}` +
     `&units=${unitsParam}&sort_order=desc&limit=2&file_type=json&api_key=${FRED_API_KEY}`;
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url, {}, 10000);
   if (!res.ok) throw new Error(`FRED series 조회 실패 (${seriesId}, ${res.status})`);
   const json = await res.json();
   const obs = (json.observations || []).filter((o) => o.value !== "."); // FRED는 결측치를 "."으로 표시
@@ -256,7 +276,7 @@ async function fetchMacroCalendar() {
     `&realtime_start=${realtimeStart}&realtime_end=${realtimeEnd}` +
     `&include_release_dates_with_no_data=true&sort_order=asc&limit=1000`;
 
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url, {}, 10000);
   if (!res.ok) throw new Error(`FRED API 오류 (${res.status}): ${await res.text().catch(() => "")}`);
   const json = await res.json();
   const rows = json.release_dates || [];
@@ -359,7 +379,7 @@ function parseCsvLine(line) {
 }
 
 async function fetchSp500Constituents() {
-  const res = await fetch(SP500_CONSTITUENTS_CSV_URL);
+  const res = await fetchWithTimeout(SP500_CONSTITUENTS_CSV_URL, {}, 10000);
   if (!res.ok) throw new Error(`S&P 500 구성종목 조회 실패: ${res.status}`);
   const text = await res.text();
   const lines = text.trim().split("\n");
@@ -380,7 +400,7 @@ async function fetchSp500Constituents() {
 
 async function fetchFinnhubEarningsCalendar(fromStr, toStr) {
   const url = `https://finnhub.io/api/v1/calendar/earnings?from=${fromStr}&to=${toStr}&token=${FINNHUB_API_KEY}`;
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url, {}, 8000);
   if (!res.ok) throw new Error(`Finnhub 실적 캘린더 조회 실패: ${res.status}`);
   const json = await res.json();
   return json.earningsCalendar || [];
@@ -388,7 +408,7 @@ async function fetchFinnhubEarningsCalendar(fromStr, toStr) {
 
 async function fetchFinnhubMarketCap(symbol) {
   const url = `https://finnhub.io/api/v1/stock/profile2?symbol=${encodeURIComponent(symbol)}&token=${FINNHUB_API_KEY}`;
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url, {}, 8000);
   if (!res.ok) throw new Error(`Finnhub 시총 조회 실패 (${symbol}): ${res.status}`);
   const json = await res.json();
   return Number.isFinite(json.marketCapitalization) ? json.marketCapitalization : null; // 단위: 백만 달러
@@ -480,9 +500,9 @@ function stripHtml(rawHtml) {
 }
 
 async function fetchLatestPost(channel, mustContainAll = []) {
-  const res = await fetch(`https://t.me/s/${channel}`, {
+  const res = await fetchWithTimeout(`https://t.me/s/${channel}`, {
     headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
-  });
+  }, 10000);
   if (!res.ok) throw new Error(`텔레그램(${channel}) 응답 실패: ${res.status}`);
   const html = await res.text();
 
@@ -559,7 +579,7 @@ ${formatSourcesBlock(sources)}
 - 핵심 수치와 종목명은 <strong>태그로 감싸서 강조
 - 부연 설명이나 전제 문구 없이, 최종 결과 문자열만 출력하세요 (따옴표나 마크다운 코드블록도 넣지 마세요)`;
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -571,7 +591,7 @@ ${formatSourcesBlock(sources)}
       max_tokens: 600,
       messages: [{ role: "user", content: prompt }],
     }),
-  });
+  }, 25000);
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -650,7 +670,7 @@ async function fetchKrSectors() {
 
   let rows = [];
   for (const basDd of krxCandidateDates(7)) {
-    const res = await fetch(`${KRX_KOSPI_ENDPOINT}?basDd=${basDd}`, { headers: { AUTH_KEY: KRX_AUTH_KEY } });
+    const res = await fetchWithTimeout(`${KRX_KOSPI_ENDPOINT}?basDd=${basDd}`, { headers: { AUTH_KEY: KRX_AUTH_KEY } }, 8000);
     if (!res.ok) continue;
     const data = await res.json();
     const result = data.OutBlock_1 || [];
@@ -685,7 +705,7 @@ ${sectorList}
 아래 JSON 배열 형식으로만 출력하세요. 다른 설명, 마크다운 코드블록, 전제 문구 없이 JSON만 출력합니다:
 [{"name":"업종명","reason":"이유"}, ...]`;
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -697,7 +717,7 @@ ${sectorList}
       max_tokens: 800,
       messages: [{ role: "user", content: prompt }],
     }),
-  });
+  }, 25000);
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -734,9 +754,9 @@ async function fetchUsSectorIndices() {
   const settled = await Promise.allSettled(
     symbols.map(async (sym) => {
       const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(sym)}`;
-      const res = await fetch(url, {
+      const res = await fetchWithTimeout(url, {
         headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36" },
-      });
+      }, 8000);
       if (!res.ok) throw new Error(`${sym} 응답 실패 (${res.status})`);
       const json = await res.json();
       const meta = json?.chart?.result?.[0]?.meta;
@@ -818,7 +838,7 @@ async function fetchDartDisclosuresRaw(bgnDe, endDe = bgnDe) {
   // 그전에 멈춥니다.
   for (let page = 1; page <= 60; page++) {
     const url = `${DART_LIST_ENDPOINT}?crtfc_key=${DART_API_KEY}&bgn_de=${bgnDe}&end_de=${endDe}&page_no=${page}&page_count=100`;
-    const res = await fetch(url);
+    const res = await fetchWithTimeout(url, {}, 8000);
     if (!res.ok) throw new Error(`DART API 오류 (${res.status})`);
     const json = await res.json();
     if (json.status === "013") break; // 그날 공시 없음(정상)
@@ -863,7 +883,7 @@ ${listText}
 아래 JSON 배열 형식으로만 출력하세요 (다른 설명, 마크다운 코드블록 없이):
 [{"corpName":"회사명","summary":"한 줄 요약"}, ...]`;
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -875,7 +895,7 @@ ${listText}
       max_tokens: 800,
       messages: [{ role: "user", content: prompt }],
     }),
-  });
+  }, 25000);
   if (!res.ok) throw new Error(`Anthropic API 오류 (공시 요약, ${res.status}): ${await res.text().catch(() => "")}`);
   const json = await res.json();
   const textBlock = (json.content || []).find((c) => c.type === "text");
@@ -972,12 +992,12 @@ function isWithinLookbackHours(date, hours) {
 
 async function fetchNaverNews(query) {
   const url = `${NAVER_NEWS_ENDPOINT}?query=${encodeURIComponent(query)}&display=100&sort=date`;
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: {
       "X-NCP-APIGW-API-KEY-ID": NAVER_CLIENT_ID,
       "X-NCP-APIGW-API-KEY": NAVER_CLIENT_SECRET,
     },
-  });
+  }, 8000);
   if (!res.ok) throw new Error(`네이버 뉴스 검색 실패 (${query}, ${res.status})`);
   const json = await res.json();
   return json.items || [];
@@ -1008,7 +1028,7 @@ async function fetchKrNewsCandidates() {
 
 async function fetchFinnhubGeneralNews() {
   const url = `https://finnhub.io/api/v1/news?category=general&token=${FINNHUB_API_KEY}`;
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url, {}, 8000);
   if (!res.ok) throw new Error(`Finnhub 뉴스 조회 실패 (${res.status})`);
   const json = await res.json();
   return Array.isArray(json) ? json : [];
@@ -1076,7 +1096,7 @@ ${listText("US", usCandidates)}
 아래 JSON 형식으로만 출력하세요 (다른 설명, 마크다운 코드블록 없이):
 {"kr": ["KR-0", "KR-3", ...], "us": ["US-1", ...]}`;
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -1090,7 +1110,7 @@ ${listText("US", usCandidates)}
       max_tokens: 4096,
       messages: [{ role: "user", content: prompt }],
     }),
-  });
+  }, 25000);
   if (!res.ok) throw new Error(`Anthropic API 오류 (뉴스 선별, ${res.status}): ${await res.text().catch(() => "")}`);
   const json = await res.json();
   const textBlock = (json.content || []).find((c) => c.type === "text");
@@ -1153,7 +1173,7 @@ async function notionInsertBlocks(children) {
   const pageId = formatNotionId(NOTION_PAGE_ID);
   const after = formatNotionId(NOTION_ANCHOR_BLOCK_ID);
 
-  const res = await fetch(`https://api.notion.com/v1/blocks/${pageId}/children`, {
+  const res = await fetchWithTimeout(`https://api.notion.com/v1/blocks/${pageId}/children`, {
     method: "PATCH",
     headers: {
       Authorization: `Bearer ${NOTION_API_KEY}`,
@@ -1161,7 +1181,7 @@ async function notionInsertBlocks(children) {
       "Content-Type": "application/json",
     },
     body: JSON.stringify({ children, after }),
-  });
+  }, 10000);
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -1232,7 +1252,7 @@ ${formatSourcesBlock(usSources)}
 - 아래 JSON 형식으로만 출력 (다른 설명, 마크다운 코드블록 금지):
 {"kr": ["불릿1", "불릿2", ...], "us": ["불릿1", "불릿2", ...]}`;
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -1244,7 +1264,7 @@ ${formatSourcesBlock(usSources)}
       max_tokens: 4096, // 짧게 쓰라는 지시는 프롬프트로, 이 값은 잘림 방지용 여유분입니다
       messages: [{ role: "user", content: prompt }],
     }),
-  });
+  }, 25000);
   if (!res.ok) throw new Error(`Anthropic API 오류 (시장 섹션, ${res.status}): ${await res.text().catch(() => "")}`);
   const json = await res.json();
   const textBlock = (json.content || []).find((c) => c.type === "text");
@@ -1282,7 +1302,7 @@ ${formatSourcesBlock(usSources)}
 - 아래 JSON 배열 형식으로만 출력 (다른 설명, 마크다운 코드블록 금지):
 ["불릿 텍스트1", "불릿 텍스트2", ...]`;
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -1294,7 +1314,7 @@ ${formatSourcesBlock(usSources)}
       max_tokens: 1000,
       messages: [{ role: "user", content: prompt }],
     }),
-  });
+  }, 25000);
   if (!res.ok) throw new Error(`Anthropic API 오류 (종목 이슈, ${res.status}): ${await res.text().catch(() => "")}`);
   const json = await res.json();
   const textBlock = (json.content || []).find((c) => c.type === "text");
