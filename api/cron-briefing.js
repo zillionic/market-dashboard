@@ -906,10 +906,17 @@ async function fetchDartDisclosuresRaw(bgnDe, endDe = bgnDe) {
 }
 
 // 기계적 1차 필터: 화이트리스트 유형만, 정정공시 제외, 같은 회사+같은 유형 하루 1건만.
+// DART list.json이 주는 corp_cls(법인구분): Y=코스피(유가증권), K=코스닥,
+// N=코넥스, E=기타(비상장 등). 코스피·코스닥 종목 공시만 다룹니다 — 코넥스·비상장
+// 법인(외부감사 대상이라 DART엔 공시 의무가 있지만 대시보드가 다루는 시장이 아님)
+// 공시가 섞여 들어오던 문제가 실제로 있었습니다.
+const DART_LISTED_CORP_CLS = new Set(["Y", "K"]);
+
 function filterNotableDisclosures(rows) {
   const seen = new Set();
   const result = [];
   for (const r of rows) {
+    if (!DART_LISTED_CORP_CLS.has(r.corp_cls)) continue;
     const title = (r.report_nm || "").trim();
     if (!title || DART_AMENDMENT_TITLE_PATTERN.test(title)) continue;
     const hit = DART_NOTABLE_PATTERNS.find((p) => p.pattern.test(title));
