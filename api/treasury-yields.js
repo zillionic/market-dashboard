@@ -12,12 +12,14 @@
 // 호출: GET https://<your-project>.vercel.app/api/treasury-yields
 // -----------------------------------------------------------------------------
 
+const { fetchWithTimeout } = require("../lib/fetchWithTimeout");
+
 const FRED_API_KEY = process.env.FRED_API_KEY;
 
 async function fetchYield(seriesId) {
   const url = `https://api.stlouisfed.org/fred/series/observations?series_id=${seriesId}` +
     `&units=lin&sort_order=desc&limit=2&file_type=json&api_key=${FRED_API_KEY}`;
-  const res = await fetch(url);
+  const res = await fetchWithTimeout(url, {}, 10000);
   if (!res.ok) throw new Error(`FRED 조회 실패 (${seriesId}, ${res.status})`);
   const json = await res.json();
   const obs = (json.observations || []).filter((o) => o.value !== "."); // FRED는 결측치를 "."으로 표시

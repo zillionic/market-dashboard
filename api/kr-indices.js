@@ -12,6 +12,8 @@
 // marketState 값: PRE(장전) / REGULAR(정규장) / POST(장후 시간외) / CLOSED(마감·주말)
 // -----------------------------------------------------------------------------
 
+const { fetchWithTimeout } = require("../lib/fetchWithTimeout");
+
 const SYMBOLS = {
   kospi: "^KS11",
   kosdaq: "^KQ11",
@@ -55,11 +57,11 @@ function getMarketState() {
 
 async function fetchOne(symbol) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`;
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: {
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
     },
-  });
+  }, 8000);
   if (!res.ok) throw new Error(`Yahoo Finance 응답 실패 (${res.status}) for ${symbol}`);
 
   const json = await res.json();
