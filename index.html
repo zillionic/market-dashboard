@@ -329,6 +329,8 @@
   .earn-row .co{ flex:1; min-width:0; }
   .earn-row .co .ticker{ color: var(--ink-faint); font-size:11px; margin-left:5px; font-family:'JetBrains Mono', monospace; }
   .earn-row .co .name{ color: var(--ink); font-weight:600; }
+  .earn-row .co .name a{ color: inherit; text-decoration: none; }
+  .earn-row .co .name a:hover{ color: var(--gold); text-decoration: underline; }
   .earn-row .sector{ font-size:10.5px; color: var(--ink-faint); white-space:nowrap; display:none; width:76px; flex-shrink:0; }
   .earn-row .mcap{
     font-family:'JetBrains Mono', monospace; font-size:12.5px; font-weight:700; color: var(--ink-dim);
@@ -1516,7 +1518,7 @@
       return `
         <div class="earn-row">
           <span class="date mono">${formatShortKoreanDate(e.date)}</span>
-          <span class="co"><span class="name">${escapeHtml(e.name)}</span><span class="ticker">${escapeHtml(e.symbol)}</span></span>
+          <span class="co"><span class="name"><a href="https://finance.yahoo.com/quote/${encodeURIComponent(e.symbol)}" target="_blank" rel="noopener">${escapeHtml(e.name)}</a></span><span class="ticker">${escapeHtml(e.symbol)}</span></span>
           <span class="sector">${escapeHtml(e.sector || "")}</span>
           <span class="mcap">${mcapStr || ""}</span>
           <span class="eps">${epsHtml}</span>
