@@ -591,7 +591,9 @@ ${formatSourcesBlock(sources)}
       max_tokens: 600,
       messages: [{ role: "user", content: prompt }],
     }),
-  }, 25000);
+  }, 15000); // 이 함수는 국내/해외 시황 생성(2단계)의 임계 경로라, 60초 함수 예산에
+  // 여유를 남기려고 다른 Claude 호출(25초)보다 짧게 잡았습니다. 프롬프트가 작아서
+  // (텔레그램 원문 몇 개) 정상적으론 몇 초면 끝납니다.
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -729,7 +731,8 @@ ${sectorList}
       max_tokens: 800,
       messages: [{ role: "user", content: prompt }],
     }),
-  }, 25000);
+  }, 15000); // summarize()와 같은 이유로 임계 경로용 짧은 타임아웃(프롬프트도 업종
+  // 10개 이름·등락률 정도라 작음).
 
   if (!res.ok) {
     const text = await res.text().catch(() => "");
@@ -1656,21 +1659,14 @@ module.exports = async function handler(req, res) {
   // 별도 목록으로 관리할 필요가 없어졌습니다 — Claude 호출도 새 원문이 있을 때만
   // 발생해서 비용이 늘지 않습니다).
   try {
-    // 서로 다른 데이터를 다루고 서로를 참조하지 않는 작업들은 전부 동시에 시작합니다.
-    // ⚠️ 예전엔 이 7개를 순차로 await해서, 각 단계가 자기 타임아웃 안에서 끝나도
-    // 전부 더하면 60초 함수 예산을 넘겨버리는 사고가 있었습니다(2026-08-18 재발 —
-    // 매크로 캘린더는 개별 타임아웃이 정상 작동했는데도, 그다음 순차 단계들에서
-    // 결국 함수 전체가 다시 FUNCTION_INVOCATION_TIMEOUT으로 죽음). Promise.allSettled로
-    // 동시에 시작하면 전체 소요 시간이 "합"이 아니라 "가장 느린 하나"로 결정됩니다.
-    const [
-      indexHistoryOutcome,
-      macroOutcome,
-      earningsOutcome,
-      disclosuresOutcome,
-      newsOutcome,
-      marketSourcesOutcome,
-      existingPayloadOutcome,
-    ] = await Promise.allSettled([
+    // ⚠️ 2026-08-18 세 번 연속 재발한 FUNCTION_INVOCATION_TIMEOUT을 겪으며 알게 된
+    // 구조적 문제: 매크로/실적/공시/뉴스 캘린더·지수 히스토리("그룹 B")는 국내/해외
+    // 시황 생성("2단계")에 전혀 필요 없는 데이터인데도, 이전 버전은 이 둘을 같은
+    // Promise.allSettled 배치에 묶어서 2단계가 그룹 B(특히 DART 페이지네이션처럼
+    // 느릴 수 있는 것들)까지 다 끝나야 시작됐습니다. 그룹 B는 2단계와 완전히
+    // 독립이므로 따로 떼어 "동시에" 돌리고, 2단계는 텔레그램 원문(그룹 A)만
+    // 준비되면 바로 시작하게 분리합니다.
+    const groupBPromise = Promise.allSettled([
       (async () => {
         const { kr, us } = await fetchIndexCloses();
         await Promise.all([
@@ -1701,6 +1697,11 @@ module.exports = async function handler(req, res) {
         const events = await fetchNewsCalendar();
         await redisSet("news:calendar", events);
       })(),
+    ]);
+
+    // 그룹 A(텔레그램 원문 + 기존 payload)만 먼저 기다립니다 — 2단계가 실제로 필요한
+    // 건 이 둘뿐입니다.
+    const [marketSourcesOutcome, existingPayloadOutcome] = await Promise.allSettled([
       // fetchMarketSources는 채널 하나가 그날 실패해도(휴가, 형식 변경, 시황 형태 글
       // 없음 등) 내부적으로 이미 Promise.allSettled를 쓰므로 이 바깥 Promise는
       // reject하지 않습니다. 국내·해외는 아래에서 완전히 독립적으로 처리합니다.
@@ -1712,19 +1713,6 @@ module.exports = async function handler(req, res) {
       // 유지하고 나머지 쪽은 정상 갱신되도록, 기존 payload를 미리 읽어둡니다.
       redisGet("briefing:latest"),
     ]);
-
-    if (indexHistoryOutcome.status === "rejected") console.warn("지수 히스토리 누적 실패, 이 부분만 건너뜁니다:", indexHistoryOutcome.reason);
-    if (macroOutcome.status === "rejected") console.warn("매크로 캘린더 갱신 실패, 이 부분만 건너뜁니다:", macroOutcome.reason);
-    if (earningsOutcome.status === "rejected") console.warn("실적 캘린더 갱신 실패, 이 부분만 건너뜁니다:", earningsOutcome.reason);
-
-    let notableDisclosuresThisWeek = [];
-    if (disclosuresOutcome.status === "rejected") {
-      console.warn("공시 캘린더 갱신 실패, 이 부분만 건너뜁니다:", disclosuresOutcome.reason);
-    } else {
-      notableDisclosuresThisWeek = disclosuresOutcome.value;
-    }
-
-    if (newsOutcome.status === "rejected") console.warn("뉴스 캘린더 갱신 실패, 이 부분만 건너뜁니다:", newsOutcome.reason);
 
     let krSourcesRaw = [], usSourcesRaw = [];
     if (marketSourcesOutcome.status === "rejected") {
@@ -1744,21 +1732,35 @@ module.exports = async function handler(req, res) {
       existingPayload = existingPayloadOutcome.value;
     }
 
-    // 국내·해외 시황 생성도 서로 독립적이라(각자 다른 소스·다른 Claude 호출) 동시에 진행합니다.
+    // 국내·해외 시황 생성도 서로 독립적이라(각자 다른 소스·다른 Claude 호출) 동시에
+    // 진행합니다. 그룹 B(macroOutcome 등)는 여기서 기다리지 않고, 이 2단계와 별도로
+    // 계속 백그라운드에서 진행됩니다 — 아래에서 한꺼번에 await합니다.
     const [krOutcome, usOutcome] = await Promise.allSettled([
       (async () => {
         if (krSources.length === 0) {
           console.warn("국내 시황 원문을 어느 채널에서도 가져오지 못했습니다 — 기존 값을 유지합니다.");
           return existingPayload?.kr || null;
         }
-        const krBriefing = await summarize(krSources, "국내(코스피/코스닥)");
-        // 업종별 이유는 별도 실패로 국내 시황 전체가 죽지 않도록 따로 try/catch 처리합니다.
+        // summarize()·fetchKrSectors()는 서로 무관해서(각각 원문 요약, KRX 조회) 동시에
+        // 시작합니다 — generateSectorReasons()만 fetchKrSectors() 결과가 있어야 하므로
+        // 그 뒤에 이어집니다.
+        const [briefingOutcome, sectorsOutcome] = await Promise.allSettled([
+          summarize(krSources, "국내(코스피/코스닥)"),
+          fetchKrSectors(),
+        ]);
+        if (briefingOutcome.status === "rejected") throw briefingOutcome.reason;
+        const krBriefing = briefingOutcome.value;
+        // 업종별 이유는 별도 실패로 국내 시황 전체가 죽지 않도록 따로 처리합니다.
         let krSectorReasons = existingPayload?.kr?.sectorReasons || [];
-        try {
-          const { top5, bottom5 } = await fetchKrSectors();
-          krSectorReasons = await generateSectorReasons(krSources, [...top5, ...bottom5], "한국 증시");
-        } catch (err) {
-          console.warn("국내 업종별 이유 생성 실패, 기존 값을 유지합니다:", err);
+        if (sectorsOutcome.status === "rejected") {
+          console.warn("국내 업종 데이터 조회 실패, 이유 생성을 건너뜁니다:", sectorsOutcome.reason);
+        } else {
+          try {
+            const { top5, bottom5 } = sectorsOutcome.value;
+            krSectorReasons = await generateSectorReasons(krSources, [...top5, ...bottom5], "한국 증시");
+          } catch (err) {
+            console.warn("국내 업종별 이유 생성 실패, 기존 값을 유지합니다:", err);
+          }
         }
         const krFirms = krSources.map(s => s.firm).join("·");
         return {
@@ -1772,21 +1774,30 @@ module.exports = async function handler(req, res) {
           console.warn("해외 시황 원문을 어느 채널에서도 가져오지 못했습니다 — 기존 값을 유지합니다.");
           return existingPayload?.us || null;
         }
-        const usBriefing = await summarize(usSources, "해외(S&P500/나스닥/다우)");
+        // isUsMarketClosedNow()는 동기 함수라 미리 확인해서, 장중이면 아예 섹터 조회를
+        // 시도하지 않고 summarize()만 진행합니다(불필요한 대기 제거).
+        const shouldFetchSectors = isUsMarketClosedNow();
+        const [briefingOutcome, sectorsOutcome] = await Promise.allSettled([
+          summarize(usSources, "해외(S&P500/나스닥/다우)"),
+          shouldFetchSectors ? fetchUsSectorIndices() : Promise.reject(new Error("미국 정규장이 아직 마감 전이라(장중 값 캡처 방지) 이번 실행에서는 건너뜁니다.")),
+        ]);
+        if (briefingOutcome.status === "rejected") throw briefingOutcome.reason;
+        const usBriefing = briefingOutcome.value;
         let usSectorsTop = existingPayload?.us?.sectorsTop || [];
         let usSectorsBottom = existingPayload?.us?.sectorsBottom || [];
-        try {
-          if (!isUsMarketClosedNow()) {
-            throw new Error("미국 정규장이 아직 마감 전이라(장중 값 캡처 방지) 이번 실행에서는 건너뜁니다.");
+        if (sectorsOutcome.status === "rejected") {
+          console.warn("해외 업종 데이터 조회 실패/건너뜀, 이유 생성을 건너뜁니다:", sectorsOutcome.reason);
+        } else {
+          try {
+            const { top5, bottom5 } = sectorsOutcome.value;
+            const usSectorReasons = await generateSectorReasons(usSources, [...top5, ...bottom5], "미국 증시");
+            const reasonMap = {};
+            usSectorReasons.forEach(r => { reasonMap[r.name] = r.reason; });
+            usSectorsTop = top5.map(s => ({ ...s, reason: reasonMap[s.name] || "" }));
+            usSectorsBottom = bottom5.map(s => ({ ...s, reason: reasonMap[s.name] || "" }));
+          } catch (err) {
+            console.warn("해외 업종별 이유 생성 실패, 기존 값을 유지합니다:", err);
           }
-          const { top5, bottom5 } = await fetchUsSectorIndices();
-          const usSectorReasons = await generateSectorReasons(usSources, [...top5, ...bottom5], "미국 증시");
-          const reasonMap = {};
-          usSectorReasons.forEach(r => { reasonMap[r.name] = r.reason; });
-          usSectorsTop = top5.map(s => ({ ...s, reason: reasonMap[s.name] || "" }));
-          usSectorsBottom = bottom5.map(s => ({ ...s, reason: reasonMap[s.name] || "" }));
-        } catch (err) {
-          console.warn("해외 업종 데이터/이유 생성 실패, 기존 값을 유지합니다:", err);
         }
         const usFirms = usSources.map(s => s.firm).join("·");
         return {
@@ -1798,6 +1809,21 @@ module.exports = async function handler(req, res) {
         };
       })(),
     ]);
+
+    // 2단계와 별도로 계속 진행되던 그룹 B를 이제 합류시킵니다. 대부분의 경우 그룹 B가
+    // 2단계보다 먼저 끝나 있어서(DART 20초 예산 상한 vs 시황 생성) 여기서 추가로
+    // 기다리는 시간은 거의 없습니다.
+    const [indexHistoryOutcome, macroOutcome, earningsOutcome, disclosuresOutcome, newsOutcome] = await groupBPromise;
+    if (indexHistoryOutcome.status === "rejected") console.warn("지수 히스토리 누적 실패, 이 부분만 건너뜁니다:", indexHistoryOutcome.reason);
+    if (macroOutcome.status === "rejected") console.warn("매크로 캘린더 갱신 실패, 이 부분만 건너뜁니다:", macroOutcome.reason);
+    if (earningsOutcome.status === "rejected") console.warn("실적 캘린더 갱신 실패, 이 부분만 건너뜁니다:", earningsOutcome.reason);
+    let notableDisclosuresThisWeek = [];
+    if (disclosuresOutcome.status === "rejected") {
+      console.warn("공시 캘린더 갱신 실패, 이 부분만 건너뜁니다:", disclosuresOutcome.reason);
+    } else {
+      notableDisclosuresThisWeek = disclosuresOutcome.value;
+    }
+    if (newsOutcome.status === "rejected") console.warn("뉴스 캘린더 갱신 실패, 이 부분만 건너뜁니다:", newsOutcome.reason);
 
     let krResult = existingPayload?.kr || null;
     if (krOutcome.status === "rejected") {
