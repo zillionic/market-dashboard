@@ -1353,12 +1353,11 @@ function todayKSTCompact() {
   return kst.replace(/-/g, "");
 }
 
-async function postToNotion(krSources, usSources, disclosureSummaries) {
-  const [marketSection, stockNews] = await Promise.all([
-    generateMarketSection(krSources, usSources),
-    generateStockNewsSection(krSources, usSources),
-  ]);
-
+// marketSection·stockNews·disclosureSummaries는 호출부에서 이미 병렬로 생성해서 넘겨받습니다
+// (예전엔 이 함수 안에서 marketSection/stockNews만 병렬화하고, disclosureSummaries는 호출부에서
+// 그 앞에 순차로 먼저 생성해서 Claude 호출 3개가 최대 25초×2(순차)+25초(병렬 2개)=최대 50초까지
+// 쌓일 수 있었습니다 — 3개를 전부 동시에 시작하면 최대 25초로 끝납니다).
+async function postToNotion(krSources, usSources, marketSection, stockNews, disclosureSummaries) {
   const krBullets = (marketSection.kr || []).map(bullet);
   const usBullets = (marketSection.us || []).map(bullet);
 
@@ -1830,15 +1829,25 @@ module.exports = async function handler(req, res) {
         notionResult = { skipped: true, reason: "국내 또는 해외 시황 원문이 없어 노션 업데이트를 건너뜁니다." };
       } else {
         try {
+          // 위에서 이미 가져온 이번 주 공시 중 오늘자만 추려서 재사용합니다(DART 재조회 없음).
+          const todayNotable = notableDisclosuresThisWeek.filter((d) => d.date === todayKSTCompact());
+          // 노션 노트에 필요한 Claude 생성 3개(공시 요약·시장 섹션·종목 이슈)는 서로 독립적이라
+          // 동시에 시작합니다. 시장 섹션·종목 이슈는 노트의 핵심이라 실패하면 전체 실패로
+          // 처리하고, 공시 요약은 부가 정보라 실패해도 빈 배열로 계속 진행합니다.
+          const [disclosureSummariesOutcome, marketSectionOutcome, stockNewsOutcome] = await Promise.allSettled([
+            generateDisclosureSummaries(todayNotable),
+            generateMarketSection(krSources, usSources),
+            generateStockNewsSection(krSources, usSources),
+          ]);
           let disclosureSummaries = [];
-          try {
-            // 위에서 이미 가져온 이번 주 공시 중 오늘자만 추려서 재사용합니다(DART 재조회 없음).
-            const todayNotable = notableDisclosuresThisWeek.filter((d) => d.date === todayKSTCompact());
-            disclosureSummaries = await generateDisclosureSummaries(todayNotable);
-          } catch (err) {
-            console.warn("공시 요약 생성 실패, 이 부분만 건너뜁니다:", err);
+          if (disclosureSummariesOutcome.status === "rejected") {
+            console.warn("공시 요약 생성 실패, 이 부분만 건너뜁니다:", disclosureSummariesOutcome.reason);
+          } else {
+            disclosureSummaries = disclosureSummariesOutcome.value;
           }
-          await postToNotion(krSources, usSources, disclosureSummaries);
+          if (marketSectionOutcome.status === "rejected") throw marketSectionOutcome.reason;
+          if (stockNewsOutcome.status === "rejected") throw stockNewsOutcome.reason;
+          await postToNotion(krSources, usSources, marketSectionOutcome.value, stockNewsOutcome.value, disclosureSummaries);
           notionResult = { ok: true };
         } catch (err) {
           console.warn("Notion 업데이트 실패:", err);
