@@ -588,7 +588,11 @@ ${formatSourcesBlock(sources)}
     },
     body: JSON.stringify({
       model: "claude-sonnet-5",
-      max_tokens: 600,
+      // 국내처럼 소스가 여러 곳(divergenceNote 포함)이면 "OO증권은 ~로 보는 반면
+      // XX증권은 ~로 봄"류의 비교 문장까지 더해져서 5줄이어도 600으로는 가끔 중간에
+      // 잘리는 문제가 실제로 있었습니다(예: 마지막 불릿이 "LG그룹(구광모·젠슨황 회동)"
+      // 처럼 결과 없이 끊김). 에러 없이 "성공"으로 잡혀서 눈치채기 어려웠던 버그입니다.
+      max_tokens: 1000,
       messages: [{ role: "user", content: prompt }],
     }),
   }, 15000); // 이 함수는 국내/해외 시황 생성(2단계)의 임계 경로라, 60초 함수 예산에
