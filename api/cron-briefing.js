@@ -499,6 +499,13 @@ function stripHtml(rawHtml) {
     .trim();
 }
 
+// 채널이 오늘 새 글을 안 올렸어도(휴장일 등) 키워드만 맞으면 며칠 전 글을 "오늘 글"로
+// 잘못 채택하던 버그가 실제로 있었습니다(2026-08-18, 국내 휴장일에 시황이 바뀜 —
+// t.me/s/ 미리보기 페이지는 최근 메시지 ~20개를 그냥 보여줄 뿐이라, 키워드 매칭만으로는
+// 그 글이 "오늘" 것인지 알 수 없었습니다). 이제 각 메시지의 <time datetime="..."> 값도
+// 같이 뽑아서, 최근 TELEGRAM_POST_LOOKBACK_HOURS 이내 글만 인정합니다.
+const TELEGRAM_POST_LOOKBACK_HOURS = 24;
+
 async function fetchLatestPost(channel, mustContainAll = []) {
   const res = await fetchWithTimeout(`https://t.me/s/${channel}`, {
     headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
@@ -506,18 +513,33 @@ async function fetchLatestPost(channel, mustContainAll = []) {
   if (!res.ok) throw new Error(`텔레그램(${channel}) 응답 실패: ${res.status}`);
   const html = await res.text();
 
-  const blocks = [...html.matchAll(/<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/g)];
-  if (blocks.length === 0) throw new Error(`텔레그램(${channel})에서 메시지를 찾지 못했습니다.`);
+  // 텍스트 블록과 그 뒤에 바로 나오는 <time datetime="..."> 하나를 같은 메시지로
+  // 묶습니다. 사진만 있는 메시지처럼 텍스트 없이 시각만 있는 항목은 pendingText가
+  // 없을 때 나타나므로 자연스럽게 건너뜁니다(뒤섞이지 않음).
+  const combined = [...html.matchAll(/<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>|<time datetime="([^"]+)"/g)];
+  const messages = [];
+  let pendingText = null;
+  for (const m of combined) {
+    if (m[1] !== undefined) {
+      pendingText = m[1];
+    } else if (m[2] !== undefined && pendingText !== null) {
+      messages.push({ text: pendingText, date: new Date(m[2]) });
+      pendingText = null;
+    }
+  }
+  if (messages.length === 0) throw new Error(`텔레그램(${channel})에서 메시지를 찾지 못했습니다.`);
 
   if (mustContainAll.length > 0) {
-    for (let i = blocks.length - 1; i >= 0; i--) {
-      const text = stripHtml(blocks[i][1]);
-      if (mustContainAll.every((kw) => text.includes(kw))) return text;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const text = stripHtml(messages[i].text);
+      if (!mustContainAll.every((kw) => text.includes(kw))) continue;
+      if (!isWithinLookbackHours(messages[i].date, TELEGRAM_POST_LOOKBACK_HOURS)) continue;
+      return text;
     }
     return null;
   }
 
-  return stripHtml(blocks[blocks.length - 1][1]);
+  return stripHtml(messages[messages.length - 1].text);
 }
 
 // ============================================================================
