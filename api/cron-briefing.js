@@ -665,16 +665,28 @@ function krxCandidateDates(maxDays = 7) {
   return dates;
 }
 
+// ⚠️ 예전엔 최근 날짜부터 하나씩 순차로 시도(실패하면 다음 날짜)했는데, KRX가 그날
+// 느리거나 응답이 없으면(각 호출 최대 8초) 최대 7번 × 8초 = 56초까지 순차로 쌓여서
+// 크론 함수 전체(60초 예산)가 통째로 타임아웃나는 사고가 실제로 있었습니다
+// (2026-08-18, #86의 개별 타임아웃을 넣은 뒤에도 재발). 후보 날짜를 전부 동시에
+// 조회해서, 가장 느린 하나(최대 8초)로 전체 소요 시간을 묶습니다.
 async function fetchKrSectors() {
   if (!KRX_AUTH_KEY) throw new Error("KRX_AUTH_KEY 환경변수가 설정되지 않았습니다.");
 
-  let rows = [];
-  for (const basDd of krxCandidateDates(7)) {
+  const candidateDates = krxCandidateDates(7);
+  const settled = await Promise.allSettled(candidateDates.map(async (basDd) => {
     const res = await fetchWithTimeout(`${KRX_KOSPI_ENDPOINT}?basDd=${basDd}`, { headers: { AUTH_KEY: KRX_AUTH_KEY } }, 8000);
-    if (!res.ok) continue;
+    if (!res.ok) return [];
     const data = await res.json();
-    const result = data.OutBlock_1 || [];
-    if (result.length > 0) { rows = result; break; }
+    return data.OutBlock_1 || [];
+  }));
+
+  // candidateDates는 최신순이므로, 그 순서 그대로 훑어서 데이터가 있는 첫 날짜를 채택합니다
+  // (병렬로 돌았다고 응답이 먼저 온 걸 쓰면 더 오래된 날짜가 채택될 수 있어, 반드시
+  // 원래 순서 기준으로 판단해야 "가장 최근 발표"라는 의미가 유지됩니다).
+  let rows = [];
+  for (const result of settled) {
+    if (result.status === "fulfilled" && result.value.length > 0) { rows = result.value; break; }
   }
   if (rows.length === 0) throw new Error("최근 7일 이내 발표된 KRX 업종 데이터를 찾지 못했습니다.");
 
@@ -831,12 +843,25 @@ const DART_NOTABLE_PATTERNS = [
 // 걸러내지 않으면 하나의 사건이 Claude 요약에 중복으로 들어갈 수 있습니다.
 const DART_AMENDMENT_TITLE_PATTERN = /^\[(기재정정|첨부정정|첨부추가|정정신고)\]/;
 
+// 페이지네이션이 total_page를 알려면 이전 페이지 응답이 와야 해서 병렬화가 안 되는
+// 구조라, 대신 전체 소요 시간에 벽시계 기준 상한을 둡니다. DART가 그날 느리면(각
+// 호출 최대 8초) 페이지가 몇 장 안 남았어도 순차 대기가 계속 쌓여 크론 함수 전체
+// 예산(60초)을 넘길 수 있어서(이 루프는 다른 독립 작업들과 병렬로 도는 배치 안에
+// 있으므로, 이 루프 하나가 오래 걸리면 그 배치 전체가 그만큼 오래 걸림) — 20초를
+// 넘기면 그때까지 모은 것만이라도 반환합니다.
+const DART_PAGINATION_BUDGET_MS = 20000;
+
 async function fetchDartDisclosuresRaw(bgnDe, endDe = bgnDe) {
+  const startedAt = Date.now();
   let rows = [];
   // total_page가 이 상한을 넘는 비정상 상황(무한루프)을 막기 위한 안전장치일 뿐이라
   // 넉넉하게 잡습니다 — 실제로 60(=6,000건)을 밑도는 날에는 total_page를 만나는 대로
   // 그전에 멈춥니다.
   for (let page = 1; page <= 60; page++) {
+    if (Date.now() - startedAt > DART_PAGINATION_BUDGET_MS) {
+      console.warn(`DART 페이지네이션이 ${DART_PAGINATION_BUDGET_MS}ms를 넘겨서(page ${page}까지) 지금까지 모은 것만 반환합니다.`);
+      break;
+    }
     const url = `${DART_LIST_ENDPOINT}?crtfc_key=${DART_API_KEY}&bgn_de=${bgnDe}&end_de=${endDe}&page_no=${page}&page_count=100`;
     const res = await fetchWithTimeout(url, {}, 8000);
     if (!res.ok) throw new Error(`DART API 오류 (${res.status})`);
