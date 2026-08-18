@@ -51,19 +51,23 @@ const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 // 안 되는 사고가 실제로 있었습니다(2026-08-18 아침 크론, FUNCTION_INVOCATION_TIMEOUT).
 // 모든 외부 호출에 AbortController 기반 타임아웃을 걸어서, 하나가 멈춰도 그 호출만
 // 실패 처리되고(대부분 이미 try/catch로 감싸져 있어 기존 값 유지로 폴백) 나머지는
-// 계속 진행되게 합니다.
-async function fetchWithTimeout(url, options = {}, timeoutMs = 10000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...options, signal: controller.signal });
-  } catch (err) {
-    if (err.name === "AbortError") throw new Error(`요청 타임아웃(${timeoutMs}ms): ${url}`);
-    throw err;
-  } finally {
-    clearTimeout(timer);
-  }
-}
+// 계속 진행되게 합니다. (다른 api/*.js에도 동일 로직이 필요해 ../lib로 공유)
+const { fetchWithTimeout } = require("../lib/fetchWithTimeout");
+
+// vercel.json의 maxDuration(초 단위)과 반드시 일치시켜야 하는 값. 아래 시간 예산
+// 가드가 이 값을 기준으로 "지금 노션 단계를 시작해도 안전한지"를 판단합니다.
+const FUNCTION_MAX_DURATION_MS = 60000;
+
+// 노션 단계(공시 요약·시장 섹션·종목 이슈 3개 Claude 호출을 병렬로 실행 후 노션에
+// 기록)는 이미 redisSet("briefing:latest")로 대시보드 데이터가 저장된 "이후"에
+// 실행되는 부가 단계라, 이 단계가 느려지거나 실패해도 대시보드 자체는 멀쩡합니다.
+// 하지만 이 단계가 maxDuration을 넘기면 Vercel이 함수 전체를 강제 종료시켜서
+// (이미 보낸 res.status(200) 응답이 유실될 수 있음) 로그에는 "타임아웃 실패"로만
+// 남고 실제로 데이터가 저장됐는지 헷갈리게 됩니다. 3개 Claude 호출(병렬,
+// NOTION_STAGE_CLAUDE_TIMEOUT_MS) + notionInsertBlocks(10초) 순서로 진행되므로
+// 최악의 경우 이 정도 시간이 걸릴 수 있다고 보고 예산을 잡습니다.
+const NOTION_STAGE_CLAUDE_TIMEOUT_MS = 18000;
+const NOTION_STAGE_ESTIMATED_MS = NOTION_STAGE_CLAUDE_TIMEOUT_MS + 10000 + 2000; // +2초 여유
 
 async function redisSet(key, valueObj) {
   const res = await fetchWithTimeout(`${UPSTASH_URL}/set/${encodeURIComponent(key)}`, {
@@ -479,71 +483,12 @@ async function fetchEarningsCalendar(persistMcapCache = true) {
   return events;
 }
 
-// t.me/s/{channel} 미리보기 페이지에서 메시지 텍스트를 대략 추출합니다.
-// ⚠️ 텔레그램이 페이지 구조를 바꾸면 이 정규식도 손봐야 할 수 있습니다.
-//
-// mustContainAll이 주어지면, 채널이 하루에 여러 번 다른 주제로 글을 올리는 경우
-// (예: 아침엔 "간밤 미국 시장 요약", 오후엔 "국내 마감 시황")를 대비해
-// 최신 글부터 거슬러 올라가며 해당 키워드를 모두 포함하는 첫 글을 찾습니다.
-// 못 찾으면 null을 반환합니다(그 채널이 오늘 시황 형태 글을 안 올렸다는 뜻).
-// 예전엔 최신 글로 무조건 폴백했는데, 소스가 1개뿐이던 시절엔 "완전히 빈 결과보단
-// 낫다"는 논리가 맞았지만, 여러 채널을 종합하는 지금은 무관한 글(예: 개별 종목
-// 실적 리뷰)이 "그 증권사의 오늘 시황"으로 잘못 채택되는 게 소스 하나가 빠지는
-// 것보다 더 나쁩니다(메리츠증권 채널에서 실제로 확인된 문제).
-function stripHtml(rawHtml) {
-  return rawHtml
-    .replace(/<br\s*\/?>/g, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&#39;/g, "'")
-    .replace(/&quot;/g, '"')
-    .trim();
-}
-
-// 채널이 오늘 새 글을 안 올렸어도(휴장일 등) 키워드만 맞으면 며칠 전 글을 "오늘 글"로
-// 잘못 채택하던 버그가 실제로 있었습니다(2026-08-18, 국내 휴장일에 시황이 바뀜 —
-// t.me/s/ 미리보기 페이지는 최근 메시지 ~20개를 그냥 보여줄 뿐이라, 키워드 매칭만으로는
-// 그 글이 "오늘" 것인지 알 수 없었습니다). 이제 각 메시지의 <time datetime="..."> 값도
-// 같이 뽑아서, 최근 TELEGRAM_POST_LOOKBACK_HOURS 이내 글만 인정합니다.
-const TELEGRAM_POST_LOOKBACK_HOURS = 24;
-
-async function fetchLatestPost(channel, mustContainAll = []) {
-  const res = await fetchWithTimeout(`https://t.me/s/${channel}`, {
-    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
-  }, 10000);
-  if (!res.ok) throw new Error(`텔레그램(${channel}) 응답 실패: ${res.status}`);
-  const html = await res.text();
-
-  // 텍스트 블록과 그 뒤에 바로 나오는 <time datetime="..."> 하나를 같은 메시지로
-  // 묶습니다. 사진만 있는 메시지처럼 텍스트 없이 시각만 있는 항목은 pendingText가
-  // 없을 때 나타나므로 자연스럽게 건너뜁니다(뒤섞이지 않음).
-  const combined = [...html.matchAll(/<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>|<time datetime="([^"]+)"/g)];
-  const messages = [];
-  let pendingText = null;
-  for (const m of combined) {
-    if (m[1] !== undefined) {
-      pendingText = m[1];
-    } else if (m[2] !== undefined && pendingText !== null) {
-      messages.push({ text: pendingText, date: new Date(m[2]) });
-      pendingText = null;
-    }
-  }
-  if (messages.length === 0) throw new Error(`텔레그램(${channel})에서 메시지를 찾지 못했습니다.`);
-
-  if (mustContainAll.length > 0) {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const text = stripHtml(messages[i].text);
-      if (!mustContainAll.every((kw) => text.includes(kw))) continue;
-      if (!isWithinLookbackHours(messages[i].date, TELEGRAM_POST_LOOKBACK_HOURS)) continue;
-      return text;
-    }
-    return null;
-  }
-
-  return stripHtml(messages[messages.length - 1].text);
-}
+// t.me/s/{channel} 미리보기 페이지에서 "오늘자로 보기에 안전한" 최신 글을 찾는
+// 로직 + HTML 태그 제거·최근 N시간 판정 유틸은 api/kr-sector-reasons.js도 동일하게
+// 필요해서 ../lib로 공유합니다(중복 구현 시 한쪽만 고쳐서 같은 버그가 재발하는 것을
+// 막기 위함 — 2026-08-18 신선도 버그가 실제로 이렇게 두 파일에 중복돼 있었습니다).
+const { stripHtml, isWithinLookbackHours } = require("../lib/textUtils");
+const { fetchLatestPost, TELEGRAM_POST_LOOKBACK_HOURS } = require("../lib/telegramFreshPost");
 
 // ============================================================================
 // 시황 원문 소스 — 국내는 여러 증권사 리서치 채널을 종합합니다. 채널 하나가 그날
@@ -959,7 +904,7 @@ ${listText}
       max_tokens: 800,
       messages: [{ role: "user", content: prompt }],
     }),
-  }, 25000);
+  }, NOTION_STAGE_CLAUDE_TIMEOUT_MS);
   if (!res.ok) throw new Error(`Anthropic API 오류 (공시 요약, ${res.status}): ${await res.text().catch(() => "")}`);
   const json = await res.json();
   const textBlock = (json.content || []).find((c) => c.type === "text");
@@ -1048,10 +993,6 @@ function hostnameOf(url) {
 // 헤드라인 앞의 [속보]/[포토] 같은 태그·공백 차이만 다른 중복 기사를 걸러내기 위한 정규화.
 function normalizeNewsTitle(title) {
   return title.replace(/^\[[^\]]*\]\s*/, "").replace(/\s+/g, "").toLowerCase();
-}
-
-function isWithinLookbackHours(date, hours) {
-  return Number.isFinite(date.getTime()) && (Date.now() - date.getTime()) <= hours * 3600 * 1000;
 }
 
 async function fetchNaverNews(query) {
@@ -1328,7 +1269,7 @@ ${formatSourcesBlock(usSources)}
       max_tokens: 4096, // 짧게 쓰라는 지시는 프롬프트로, 이 값은 잘림 방지용 여유분입니다
       messages: [{ role: "user", content: prompt }],
     }),
-  }, 25000);
+  }, NOTION_STAGE_CLAUDE_TIMEOUT_MS);
   if (!res.ok) throw new Error(`Anthropic API 오류 (시장 섹션, ${res.status}): ${await res.text().catch(() => "")}`);
   const json = await res.json();
   const textBlock = (json.content || []).find((c) => c.type === "text");
@@ -1378,7 +1319,7 @@ ${formatSourcesBlock(usSources)}
       max_tokens: 1000,
       messages: [{ role: "user", content: prompt }],
     }),
-  }, 25000);
+  }, NOTION_STAGE_CLAUDE_TIMEOUT_MS);
   if (!res.ok) throw new Error(`Anthropic API 오류 (종목 이슈, ${res.status}): ${await res.text().catch(() => "")}`);
   const json = await res.json();
   const textBlock = (json.content || []).find((c) => c.type === "text");
@@ -1695,6 +1636,9 @@ module.exports = async function handler(req, res) {
   // 별도 목록으로 관리할 필요가 없어졌습니다 — Claude 호출도 새 원문이 있을 때만
   // 발생해서 비용이 늘지 않습니다).
   try {
+    // 아래 노션 단계 직전에 "지금 시작해도 안전한지"를 판단하기 위한 기준 시각.
+    const mainStartedAt = Date.now();
+
     // ⚠️ 2026-08-18 세 번 연속 재발한 FUNCTION_INVOCATION_TIMEOUT을 겪으며 알게 된
     // 구조적 문제: 매크로/실적/공시/뉴스 캘린더·지수 히스토리("그룹 B")는 국내/해외
     // 시황 생성("2단계")에 전혀 필요 없는 데이터인데도, 이전 버전은 이 둘을 같은
@@ -1886,7 +1830,16 @@ module.exports = async function handler(req, res) {
     // 노션 업데이트는 실패해도 대시보드 데이터 저장에는 영향 없도록 별도 try/catch.
     // 국내·해외 둘 다 오늘 새 원문이 있어야 의미 있는 노트가 되므로, 하나라도 없으면 건너뜁니다.
     let notionResult = { skipped: true, reason: "NOTION_API_KEY/NOTION_PAGE_ID/NOTION_ANCHOR_BLOCK_ID 미설정" };
-    if (NOTION_API_KEY && NOTION_PAGE_ID && NOTION_ANCHOR_BLOCK_ID) {
+    // 이 시점 이전 단계(시황 생성·업종 조회 등)가 예상보다 오래 걸렸다면, 노션 단계까지
+    // 시작했다가 maxDuration에 걸려 함수가 강제 종료되는 것보다는 이번 실행에서는
+    // 노션 단계만 건너뛰는 게 낫습니다 — 핵심 데이터(payload)는 이미 위에서 저장 완료된
+    // 상태라, 건너뛰어도 대시보드에는 영향이 없습니다. 다음 실행에서 다시 시도됩니다.
+    const elapsedBeforeNotionMs = Date.now() - mainStartedAt;
+    const notionStageWouldOverrun = elapsedBeforeNotionMs + NOTION_STAGE_ESTIMATED_MS > FUNCTION_MAX_DURATION_MS;
+    if (notionStageWouldOverrun) {
+      console.warn(`노션 단계 건너뜀: 이미 ${elapsedBeforeNotionMs}ms 경과, 예상 소요 ${NOTION_STAGE_ESTIMATED_MS}ms 더하면 maxDuration(${FUNCTION_MAX_DURATION_MS}ms) 초과 위험.`);
+      notionResult = { skipped: true, reason: `시간 예산 부족으로 건너뜀 (경과 ${elapsedBeforeNotionMs}ms)` };
+    } else if (NOTION_API_KEY && NOTION_PAGE_ID && NOTION_ANCHOR_BLOCK_ID) {
       if (krSources.length === 0 || usSources.length === 0) {
         notionResult = { skipped: true, reason: "국내 또는 해외 시황 원문이 없어 노션 업데이트를 건너뜁니다." };
       } else {

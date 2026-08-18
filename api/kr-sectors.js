@@ -35,6 +35,8 @@
 // 여전히 사람(또는 Claude)이 채워야 합니다 — 숫자만 자동화되는 구조입니다.
 // -----------------------------------------------------------------------------
 
+const { fetchWithTimeout } = require("../lib/fetchWithTimeout");
+
 const ENDPOINTS = {
   KOSPI: "https://data-dbg.krx.co.kr/svc/apis/idx/kospi_dd_trd",
   KOSDAQ: "https://data-dbg.krx.co.kr/svc/apis/idx/kosdaq_dd_trd",
@@ -90,9 +92,9 @@ function candidateDates(maxDays = 7) {
 }
 
 async function fetchForDate(endpoint, basDd, authKey) {
-  const krxRes = await fetch(`${endpoint}?basDd=${basDd}`, {
+  const krxRes = await fetchWithTimeout(`${endpoint}?basDd=${basDd}`, {
     headers: { AUTH_KEY: authKey },
-  });
+  }, 8000);
   if (!krxRes.ok) {
     const text = await krxRes.text().catch(() => "");
     throw new Error(`KRX API 오류 (${krxRes.status}): ${text}`);
@@ -124,11 +126,18 @@ module.exports = async function handler(req, res) {
     let rows = [];
     let usedBasDd = null;
 
-    for (const basDd of attempts) {
-      const result = await fetchForDate(endpoint, basDd, AUTH_KEY);
-      if (result.length > 0) {
-        rows = result;
-        usedBasDd = basDd;
+    // 이전엔 후보 날짜(최대 7개)를 하나씩 순서대로 await하는 직렬 루프였고 각 호출에
+    // 타임아웃도 없었습니다 — KRX 응답이 하나라도 멈추면 그 뒤 날짜는 아예 시도조차
+    // 못 하고 무한 대기, 이 엔드포인트는 대시보드가 열릴 때마다 직접 호출하므로
+    // cron보다도 체감 영향이 큽니다. cron-briefing.js의 fetchKrSectors()와 동일하게
+    // 7개 날짜를 동시에 조회하고, 원래 순서(가장 최근 날짜 우선) 중 데이터가 있는
+    // 첫 결과를 채택합니다.
+    const settled = await Promise.allSettled(attempts.map((basDd) => fetchForDate(endpoint, basDd, AUTH_KEY)));
+    for (let i = 0; i < attempts.length; i++) {
+      const result = settled[i];
+      if (result.status === "fulfilled" && result.value.length > 0) {
+        rows = result.value;
+        usedBasDd = attempts[i];
         break;
       }
     }

@@ -27,6 +27,8 @@
 //   }
 // -----------------------------------------------------------------------------
 
+const { fetchWithTimeout } = require("../lib/fetchWithTimeout");
+
 const API_BASE = "https://data-dbg.krx.co.kr/svc/apis/sto";
 const ENDPOINTS = {
   KOSPI: "/stk_bydd_trd",   // 유가증권 일별매매정보
@@ -65,7 +67,7 @@ function candidateDates(maxDays = 7) {
 }
 
 async function fetchRows(market, basDd, authKey) {
-  const res = await fetch(`${API_BASE}${ENDPOINTS[market]}`, {
+  const res = await fetchWithTimeout(`${API_BASE}${ENDPOINTS[market]}`, {
     method: "POST",
     headers: {
       AUTH_KEY: authKey,
@@ -73,7 +75,7 @@ async function fetchRows(market, basDd, authKey) {
       Accept: "application/json",
     },
     body: JSON.stringify({ basDd }),
-  });
+  }, 8000);
   if (!res.ok) {
     const text = await res.text().catch(() => "");
     throw new Error(`KRX ${market} 응답 실패 (${res.status}): ${text}`);
@@ -94,12 +96,16 @@ function summarize(rows) {
   return { up, down, flat, total: rows.length };
 }
 
-// 특정 시장에 대해 후보 날짜들을 순서대로 시도, 데이터가 있는 첫 날짜를 채택.
+// 특정 시장에 대해 후보 날짜들(최대 7개)을 동시에 조회하고, 데이터가 있는 가장
+// 최근 날짜를 채택합니다. 예전엔 하나씩 순서대로 await하는 직렬 루프였고 개별
+// 호출에 타임아웃도 없어서, KRX 응답이 하나라도 멈추면 이 엔드포인트 전체가
+// 무한 대기에 빠질 수 있었습니다(kr-sectors.js와 동일한 문제 패턴).
 async function fetchWithRetry(market, attempts, authKey) {
-  for (const basDd of attempts) {
-    const rows = await fetchRows(market, basDd, authKey);
-    if (rows.length > 0) {
-      return { basDd, summary: summarize(rows) };
+  const settled = await Promise.allSettled(attempts.map((basDd) => fetchRows(market, basDd, authKey)));
+  for (let i = 0; i < attempts.length; i++) {
+    const result = settled[i];
+    if (result.status === "fulfilled" && result.value.length > 0) {
+      return { basDd: attempts[i], summary: summarize(result.value) };
     }
   }
   return null;

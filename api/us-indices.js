@@ -15,6 +15,8 @@
 // marketState 값: PRE(프리마켓) / REGULAR(정규장) / POST(애프터마켓) / CLOSED(마감·주말)
 // -----------------------------------------------------------------------------
 
+const { fetchWithTimeout } = require("../lib/fetchWithTimeout");
+
 const SYMBOLS = {
   sp500: "^GSPC",
   nasdaq: "^IXIC",
@@ -59,12 +61,12 @@ function getMarketState() {
 
 async function fetchOne(symbol) {
   const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(symbol)}`;
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     headers: {
       // Yahoo가 브라우저처럼 보이지 않는 요청을 막는 경우가 있어 User-Agent를 지정합니다.
       "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36",
     },
-  });
+  }, 8000);
   if (!res.ok) throw new Error(`Yahoo Finance 응답 실패 (${res.status}) for ${symbol}`);
 
   const json = await res.json();

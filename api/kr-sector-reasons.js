@@ -19,13 +19,16 @@
 // 응답: { "전기전자": "이유...", "보험": "이유...", ... }
 // -----------------------------------------------------------------------------
 
+const { fetchWithTimeout } = require("../lib/fetchWithTimeout");
+const { fetchLatestPost } = require("../lib/telegramFreshPost");
+
 const UPSTASH_URL = process.env.UPSTASH_REDIS_REST_URL;
 const UPSTASH_TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
 
 async function redisGet(key) {
-  const res = await fetch(`${UPSTASH_URL}/get/${encodeURIComponent(key)}`, {
+  const res = await fetchWithTimeout(`${UPSTASH_URL}/get/${encodeURIComponent(key)}`, {
     headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` },
-  });
+  }, 8000);
   if (!res.ok) throw new Error(`Upstash 조회 실패: ${res.status}`);
   const json = await res.json();
   if (!json.result) return null;
@@ -33,11 +36,11 @@ async function redisGet(key) {
 }
 
 async function redisSet(key, valueObj) {
-  const res = await fetch(`${UPSTASH_URL}/set/${encodeURIComponent(key)}`, {
+  const res = await fetchWithTimeout(`${UPSTASH_URL}/set/${encodeURIComponent(key)}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${UPSTASH_TOKEN}` },
     body: JSON.stringify(valueObj),
-  });
+  }, 8000);
   if (!res.ok) throw new Error(`Upstash 저장 실패: ${res.status}`);
 }
 
@@ -46,33 +49,15 @@ function todayKSTCompact() {
   return kst.replace(/-/g, "");
 }
 
-// 텔레그램에서 국내 마감 시황 원문을 가져옵니다 (cron-briefing.js와 동일한 로직).
-function stripHtml(rawHtml) {
-  return rawHtml
-    .replace(/<br\s*\/?>/g, "\n")
-    .replace(/<[^>]+>/g, "")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&#39;/g, "'")
-    .replace(/&quot;/g, '"')
-    .trim();
-}
-
+// 텔레그램에서 국내 마감 시황 원문을 가져옵니다. cron-briefing.js와 동일한 신선도
+// 검증(최근 24시간 이내 글만 인정)이 적용된 공유 로직을 그대로 씁니다 — 예전엔 이
+// 파일만 별도로 신선도 체크 없이 키워드만 매칭해서, 국내 휴장일에 며칠 전 글로
+// 업종 이유를 생성하는 것과 같은 종류의 버그가 여기서도 재발할 수 있었습니다.
+// 매칭되는 글이 없으면(오늘 새 시황 글이 없음) null을 반환하므로 호출 측에서 처리합니다.
 async function fetchKrRaw() {
-  const res = await fetch("https://t.me/s/shStrategy", {
-    headers: { "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)" },
-  });
-  if (!res.ok) throw new Error(`텔레그램 응답 실패: ${res.status}`);
-  const html = await res.text();
-  const blocks = [...html.matchAll(/<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/g)];
-  if (blocks.length === 0) throw new Error("텔레그램에서 메시지를 찾지 못했습니다.");
-
-  for (let i = blocks.length - 1; i >= 0; i--) {
-    const text = stripHtml(blocks[i][1]);
-    if (text.includes("코스피") && text.includes("코스닥")) return text;
-  }
-  return stripHtml(blocks[blocks.length - 1][1]);
+  const text = await fetchLatestPost("shStrategy", ["코스피", "코스닥"]);
+  if (!text) throw new Error("최근 24시간 이내의 신한투자증권 국내 시황 원문을 찾지 못했습니다.");
+  return text;
 }
 
 async function generateReasonsFor(sectors, krRaw) {
@@ -90,7 +75,7 @@ ${sectorList}
 아래 JSON 배열 형식으로만 출력하세요 (다른 설명, 마크다운 코드블록 금지):
 [{"name":"업종명","reason":"이유"}, ...]`;
 
-  const res = await fetch("https://api.anthropic.com/v1/messages", {
+  const res = await fetchWithTimeout("https://api.anthropic.com/v1/messages", {
     method: "POST",
     headers: {
       "content-type": "application/json",
@@ -102,7 +87,7 @@ ${sectorList}
       max_tokens: 1500,
       messages: [{ role: "user", content: prompt }],
     }),
-  });
+  }, 15000);
   if (!res.ok) throw new Error(`Anthropic API 오류 (${res.status}): ${await res.text().catch(() => "")}`);
   const json = await res.json();
   const textBlock = (json.content || []).find((c) => c.type === "text");
