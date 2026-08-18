@@ -953,7 +953,7 @@
       badge.textContent = usMarketState;
       badge.className = "badge " + (isRegular ? "live" : "snapshot");
     }
-    return { usMarketState };
+    return { usMarketState, usAsOfDate: json.asOfDate || null };
   }
 
   // ---- [국내 지수 값] Yahoo Finance (^KS11/^KQ11/KRW=X) — 장중엔 실시간, 마감 후엔 종가 ----
@@ -1097,7 +1097,25 @@
       return null;
     }
   }
-  function applyHistory(hist){
+
+  // 히스토리는 크론이 하루 한 번만 쌓아서, 장중엔 오늘자 포인트가 아예 없거나(정상)
+  // 혹은 크론을 장중에 수동 실행한 경우 그 순간의 장중가에 고정돼버립니다(지수 카드는
+  // 매분 실시간 갱신되는데 차트만 멈춰있는 문제). 오늘자(asOfDate) 포인트는 지수 카드가
+  // 쓰는 것과 같은 실시간 값으로 매번 덮어써서, 장중엔 차트도 카드처럼 계속 움직이게
+  // 하고 장마감 후 다음 날 크론이 도는 순간부터는 그 확정 종가로 자연히 대체됩니다.
+  function mergeLiveIntoHistory(historyArr, todayAsOfDate, liveClose){
+    if (!Array.isArray(historyArr) || !todayAsOfDate || !Number.isFinite(liveClose)) return historyArr;
+    const last = historyArr[historyArr.length - 1];
+    if (last && last.date === todayAsOfDate) {
+      return [...historyArr.slice(0, -1), { date: todayAsOfDate, close: liveClose }];
+    }
+    if (!last || last.date < todayAsOfDate) {
+      return [...historyArr, { date: todayAsOfDate, close: liveClose }];
+    }
+    return historyArr; // last.date > todayAsOfDate (이론상 발생 안 함) — 그대로 둠
+  }
+
+  function applyHistory(hist, liveCtx){
     if(!hist) return;
     Object.keys(DATA.kr.history).forEach((name) => {
       if (Array.isArray(hist[name])) DATA.kr.history[name] = hist[name];
@@ -1105,6 +1123,18 @@
     Object.keys(DATA.us.history).forEach((name) => {
       if (Array.isArray(hist[name])) DATA.us.history[name] = hist[name];
     });
+    if (!liveCtx) return;
+    const { krIndexAsOfDate, usAsOfDate, krIndicesJson, usIndicesJson } = liveCtx;
+    if (krIndicesJson) {
+      if (Number.isFinite(krIndicesJson.kospi?.close)) DATA.kr.history["KOSPI"] = mergeLiveIntoHistory(DATA.kr.history["KOSPI"], krIndexAsOfDate, krIndicesJson.kospi.close);
+      if (Number.isFinite(krIndicesJson.kosdaq?.close)) DATA.kr.history["KOSDAQ"] = mergeLiveIntoHistory(DATA.kr.history["KOSDAQ"], krIndexAsOfDate, krIndicesJson.kosdaq.close);
+      if (Number.isFinite(krIndicesJson.usdkrw?.close)) DATA.kr.history["USD/KRW"] = mergeLiveIntoHistory(DATA.kr.history["USD/KRW"], krIndexAsOfDate, krIndicesJson.usdkrw.close);
+    }
+    if (usIndicesJson) {
+      if (Number.isFinite(usIndicesJson.sp500?.close)) DATA.us.history["S&P 500"] = mergeLiveIntoHistory(DATA.us.history["S&P 500"], usAsOfDate, usIndicesJson.sp500.close);
+      if (Number.isFinite(usIndicesJson.nasdaq?.close)) DATA.us.history["NASDAQ"] = mergeLiveIntoHistory(DATA.us.history["NASDAQ"], usAsOfDate, usIndicesJson.nasdaq.close);
+      if (Number.isFinite(usIndicesJson.dow?.close)) DATA.us.history["DOW"] = mergeLiveIntoHistory(DATA.us.history["DOW"], usAsOfDate, usIndicesJson.dow.close);
+    }
   }
 
   // ---- [매크로 캘린더] cron이 FRED에서 매일 가져와 쌓아둔 다음 7일 발표 일정을 읽어옵니다 ----
@@ -1302,13 +1332,13 @@
 
     const { krBasDd } = applyKrMarket(krMarketResult);
     applyBreadth(breadthJson);
-    const { usMarketState } = applyUsIndices(usIndicesJson);
+    const { usMarketState, usAsOfDate } = applyUsIndices(usIndicesJson);
     const { krMarketState, krIndexAsOfDate } = applyKrIndices(krIndicesJson);
     applyExtraTickers(extraTickersJson);
     applyTreasuryYields(treasuryYieldsJson);
     updateMarketBadges(krBasDd, krMarketState, krIndexAsOfDate, usMarketState);
     applyBriefing(briefingJson);
-    applyHistory(historyJson);
+    applyHistory(historyJson, { krIndexAsOfDate, usAsOfDate, krIndicesJson, usIndicesJson });
     applyMacro(macroJson);
     applyEarnings(earningsJson);
     applyDisclosures(disclosuresJson);
