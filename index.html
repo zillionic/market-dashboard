@@ -1466,17 +1466,23 @@
       el.innerHTML = `<div class="macro-cal-empty">이번 주 예정된 주요 발표가 없습니다.</div>`;
       return;
     }
-    el.innerHTML = events.map(e => `
+    el.innerHTML = events.map(e => {
+      // seriesId가 있으면(ISM 등 일부 제외 대부분) FRED 공식 시리즈 페이지로 링크합니다.
+      const nameHtml = e.seriesId
+        ? `<a href="https://fred.stlouisfed.org/series/${encodeURIComponent(e.seriesId)}" target="_blank" rel="noopener">${e.name}</a>`
+        : e.name;
+      return `
       <div class="macro-cal-item">
         <span class="date mono">${formatShortKoreanDate(e.date)}</span>
-        <span class="name">${e.name}</span>
+        <span class="name">${nameHtml}</span>
         <span class="value">
           ${e.period ? `<span class="period mono">${e.period}</span>` : ""}
           ${e.actual ? `<span class="actual mono">${e.actual}</span>` : ""}
           ${e.previous ? `<span class="previous mono">(직전 ${e.previous})</span>` : ""}
         </span>
       </div>
-    `).join("");
+    `;
+    }).join("");
   }
 
   // marketCap 단위는 Finnhub 기준 "백만 달러"입니다.

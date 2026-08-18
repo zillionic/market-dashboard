@@ -315,7 +315,10 @@ async function fetchMacroCalendar() {
   // 컨센서스(예상치)는 FRED에 아예 없는 데이터라 여기 포함되지 않습니다 — 나중에 다른 소스로
   // 보강할 부분입니다.
   const events = await Promise.all(filtered.map(async (e) => {
-    const item = { date: e.date, name: `${e.ko}${periodLabel(e.date, e.periodOffset)}` };
+    // seriesId는 대시보드에서 지표명을 클릭했을 때 FRED 공식 시리즈 페이지
+    // (fred.stlouisfed.org/series/{seriesId})로 연결하는 데 씁니다. ISM처럼
+    // FRED에 원본 시리즈가 없는 지표는 seriesId가 null이라 자연히 링크가 안 생깁니다.
+    const item = { date: e.date, name: `${e.ko}${periodLabel(e.date, e.periodOffset)}`, seriesId: e.seriesId || null };
     if (e.date <= todayStr && e.seriesId) {
       try {
         const { actual, previous, displayFormat, period } = await fetchFredActualPrevious(e.seriesId, e.units);
