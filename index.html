@@ -1528,10 +1528,15 @@
     }
     el.innerHTML = events.map(e => {
       const iso = `${e.date.slice(0,4)}-${e.date.slice(4,6)}-${e.date.slice(6,8)}`;
+      // DART 전자공시 뷰어 URL. rceptNo(접수번호)는 DART API가 주는 값이라(우리가
+      // 계산한 값이 아님) 그대로 링크에 넣기 전에 이스케이프해둡니다.
+      const nameHtml = e.rceptNo
+        ? `<a href="https://dart.fss.or.kr/dsaf001/main.do?rcpNo=${encodeURIComponent(e.rceptNo)}" target="_blank" rel="noopener">${escapeHtml(e.corpName)}</a>`
+        : escapeHtml(e.corpName);
       return `
         <div class="macro-cal-item">
           <span class="date mono">${formatShortKoreanDate(iso)}</span>
-          <span class="name">${escapeHtml(e.corpName)}</span>
+          <span class="name">${nameHtml}</span>
           <span class="value"><span class="period mono">${e.type}</span></span>
         </div>
       `;
