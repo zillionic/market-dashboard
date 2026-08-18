@@ -553,10 +553,10 @@ async function fetchLatestPost(channel, mustContainAll = []) {
 // 시황 형태 글 자체를 안 올렸거나(또는 전일 마감 시황을 다음날 올리는 등 발행
 // 주기가 다르거나) 형식이 안 맞으면 자동으로 제외됩니다(위 fetchLatestPost 참고).
 // ============================================================================
+// 여러 증권사를 종합하니 시각 차이 비교 문장이 섞여 들어가 오히려 부자연스럽다는
+// 피드백으로 신한투자증권 단독 소스로 되돌렸습니다.
 const KR_TELEGRAM_CHANNELS = [
   { id: "shStrategy", firm: "신한투자증권" },
-  { id: "tRadarnewsdesk", firm: "유안타증권" },
-  { id: "KiwoomResearch", firm: "키움증권" },
 ];
 const US_TELEGRAM_CHANNELS = [
   { id: "ehdwl", firm: "미래에셋증권" },
