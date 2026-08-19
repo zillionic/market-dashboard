@@ -478,7 +478,6 @@
     margin-top: 26px; padding-top: 16px; border-top: 1px solid var(--line);
     font-size: 12px; color: var(--ink-faint); line-height:1.8;
   }
-  footer .note{ color: var(--gold); }
   #cronHealthNote.stale{ color: var(--gold); font-weight: 600; }
 </style>
 </head>
@@ -636,7 +635,6 @@
   </main>
 
   <footer>
-    <p class="note" id="footerNote"></p>
     <p id="footerSources"></p>
     <p id="cronHealthNote"></p>
     <p>※ 이 페이지는 정적 파일입니다. 매일 아침 DATA 블록만 교체해서 재배포하면 최신 시황이 반영됩니다. 실시간 연동은 USE_LIVE_API를 켜고 fetchLiveData()를 채우면 됩니다.</p>
@@ -1917,19 +1915,28 @@
   function render(){
     renderDateStatus();
     document.getElementById("updatedAt").textContent = DATA.updatedAt;
+    // USE_LIVE_API가 켜져 있으면(LIVE/DELAY/OFFLINE 셋 다) 실제로 60초마다 자동
+    // 갱신되는 상태라, 배지에 마우스를 올리면 그 사실을 바로 알 수 있게 title
+    // 툴팁을 답니다(숫자가 새로고침 없이 가끔 바뀌는 이유를 알려주기 위함).
+    // SNAPSHOT은 자동 갱신이 아예 안 도니(startAutoRefresh 참고) 툴팁 없음.
     const badge = document.getElementById("modeBadge");
+    const autoRefreshTitle = `${LIVE_REFRESH_INTERVAL_MS / 1000}초마다 자동 갱신됩니다`;
     if (!USE_LIVE_API) {
       badge.textContent = "SNAPSHOT";
       badge.className = "badge snapshot";
+      badge.removeAttribute("title");
     } else if (liveConnectionState === "offline") {
       badge.textContent = "OFFLINE";
       badge.className = "badge offline";
+      badge.title = autoRefreshTitle;
     } else if (liveConnectionState === "partial") {
       badge.textContent = "DELAY";
       badge.className = "badge partial";
+      badge.title = autoRefreshTitle;
     } else {
       badge.textContent = "LIVE";
       badge.className = "badge live";
+      badge.title = autoRefreshTitle;
     }
 
     renderTicker();
@@ -1949,7 +1956,6 @@
     renderBriefing("us-briefing", DATA.us.briefing);
     renderSectorSection("us-sector-bars", "us-sector-reasons", DATA.us.sectorsTop, DATA.us.sectorsBottom);
 
-    document.getElementById("footerNote").textContent = "데이터 기준: " + DATA.updatedAt;
     document.getElementById("footerSources").textContent = DATA.sources;
     renderCronHealth(DATA.lastCronRun);
   }
