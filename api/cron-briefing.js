@@ -1370,23 +1370,34 @@ function todayKSTCompact() {
 // (예전엔 이 함수 안에서 marketSection/stockNews만 병렬화하고, disclosureSummaries는 호출부에서
 // 그 앞에 순차로 먼저 생성해서 Claude 호출 3개가 최대 25초×2(순차)+25초(병렬 2개)=최대 50초까지
 // 쌓일 수 있었습니다 — 3개를 전부 동시에 시작하면 최대 25초로 끝납니다).
+//
+// marketSection·stockNews는 생성이 실패하면 호출부에서 null을 넘깁니다("완전한 노트가
+// 아니면 안 올린다"는 원칙은 없고, 가끔 섹션이 빠지더라도 매일 확인하는 게 목적이라
+// 실패한 섹션만 안내 문구로 대체하고 나머지는 그대로 올립니다. 2026-08-19 확인됨 —
+// Anthropic API 응답이 느려지는 날 시장 섹션이 반복해서 타임아웃 나던 문제).
 async function postToNotion(krSources, usSources, marketSection, stockNews, disclosureSummaries) {
-  const krBullets = (marketSection.kr || []).map(bullet);
-  const usBullets = (marketSection.us || []).map(bullet);
+  const marketSectionFailed = !marketSection;
+  const marketFailedBullet = [bullet("(생성 실패로 이 섹션을 건너뛰었습니다 — 대시보드에서 확인해주세요)")];
+  const krBullets = marketSectionFailed ? marketFailedBullet : (marketSection.kr || []).map(bullet);
+  const usBullets = marketSectionFailed ? marketFailedBullet : (marketSection.us || []).map(bullet);
 
   // 텔레그램 원문 기반 종목 뉴스에 DART 공시 요약을 더하되, 이미 같은 회사가
   // 텔레그램 쪽에서 언급됐으면 중복으로 추가하지 않습니다. 둘 다 활발한 날엔
   // 합쳐서 너무 길어질 수 있어서, 최종 개수를 MAX_STOCK_NEWS_BULLETS로 제한하고
   // 텔레그램(애널리스트가 이미 한 번 걸러서 언급한 것)을 우선 채운 뒤 남는
   // 자리만 DART 쪽으로 채웁니다.
+  const stockNewsFailed = !stockNews;
+  const safeStockNews = stockNews || [];
   const MAX_STOCK_NEWS_BULLETS = 5;
-  const mentionedText = stockNews.join(" ");
+  const mentionedText = safeStockNews.join(" ");
   const dartOnly = (disclosureSummaries || []).filter((d) => !mentionedText.includes(d.corpName));
   const combinedStockNews = [
-    ...stockNews,
+    ...safeStockNews,
     ...dartOnly.map((d) => `${d.corpName}, ${d.summary} (공시)`),
   ].slice(0, MAX_STOCK_NEWS_BULLETS);
-  const stockBullets = combinedStockNews.length ? combinedStockNews.map(bullet) : [bullet("(오늘은 원문에서 종목별 이슈를 찾지 못했습니다)")];
+  const stockBullets = combinedStockNews.length
+    ? combinedStockNews.map(bullet)
+    : [bullet(stockNewsFailed ? "(생성 실패로 이 섹션을 건너뛰었습니다 — 대시보드에서 확인해주세요)" : "(오늘은 원문에서 종목별 이슈를 찾지 못했습니다)")];
 
   const children = [
     heading2(todayKSTCompact()),
@@ -1880,8 +1891,10 @@ module.exports = async function handler(req, res) {
           // 위에서 이미 가져온 이번 주 공시 중 오늘자만 추려서 재사용합니다(DART 재조회 없음).
           const todayNotable = notableDisclosuresThisWeek.filter((d) => d.date === todayKSTCompact());
           // 노션 노트에 필요한 Claude 생성 3개(공시 요약·시장 섹션·종목 이슈)는 서로 독립적이라
-          // 동시에 시작합니다. 시장 섹션·종목 이슈는 노트의 핵심이라 실패하면 전체 실패로
-          // 처리하고, 공시 요약은 부가 정보라 실패해도 빈 배열로 계속 진행합니다.
+          // 동시에 시작합니다. 예전엔 시장 섹션·종목 이슈 중 하나라도 실패하면 그날 노션
+          // 업데이트를 통째로 취소했는데, "완전한 노트가 아니면 안 올린다"는 원칙은 없고
+          // 오히려 가끔 섹션이 빠지더라도 매일 아침 확인하는 게 목적이라(2026-08-19 확인),
+          // 이제 셋 다 실패해도 그 섹션만 안내 문구로 대체하고 나머지는 그대로 올립니다.
           const [disclosureSummariesOutcome, marketSectionOutcome, stockNewsOutcome] = await Promise.allSettled([
             generateDisclosureSummaries(todayNotable),
             generateMarketSection(krSources, usSources),
@@ -1893,10 +1906,25 @@ module.exports = async function handler(req, res) {
           } else {
             disclosureSummaries = disclosureSummariesOutcome.value;
           }
-          if (marketSectionOutcome.status === "rejected") throw marketSectionOutcome.reason;
-          if (stockNewsOutcome.status === "rejected") throw stockNewsOutcome.reason;
-          await postToNotion(krSources, usSources, marketSectionOutcome.value, stockNewsOutcome.value, disclosureSummaries);
-          notionResult = { ok: true };
+          let marketSection = null;
+          if (marketSectionOutcome.status === "rejected") {
+            console.warn("시장 섹션 생성 실패, 이 부분만 안내 문구로 대체하고 계속 진행합니다:", marketSectionOutcome.reason);
+          } else {
+            marketSection = marketSectionOutcome.value;
+          }
+          let stockNews = null;
+          if (stockNewsOutcome.status === "rejected") {
+            console.warn("종목 이슈 생성 실패, 이 부분만 안내 문구로 대체하고 계속 진행합니다:", stockNewsOutcome.reason);
+          } else {
+            stockNews = stockNewsOutcome.value;
+          }
+          await postToNotion(krSources, usSources, marketSection, stockNews, disclosureSummaries);
+          const failedSections = [
+            marketSectionOutcome.status === "rejected" ? "시장 섹션" : null,
+            stockNewsOutcome.status === "rejected" ? "종목 이슈" : null,
+            disclosureSummariesOutcome.status === "rejected" ? "공시 요약" : null,
+          ].filter(Boolean);
+          notionResult = failedSections.length > 0 ? { ok: true, partial: true, failedSections } : { ok: true };
         } catch (err) {
           console.warn("Notion 업데이트 실패:", err);
           notionResult = { ok: false, error: String(err) };
