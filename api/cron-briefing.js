@@ -63,11 +63,22 @@ const FUNCTION_MAX_DURATION_MS = 60000;
 // 실행되는 부가 단계라, 이 단계가 느려지거나 실패해도 대시보드 자체는 멀쩡합니다.
 // 하지만 이 단계가 maxDuration을 넘기면 Vercel이 함수 전체를 강제 종료시켜서
 // (이미 보낸 res.status(200) 응답이 유실될 수 있음) 로그에는 "타임아웃 실패"로만
-// 남고 실제로 데이터가 저장됐는지 헷갈리게 됩니다. 3개 Claude 호출(병렬,
-// NOTION_STAGE_CLAUDE_TIMEOUT_MS) + notionInsertBlocks(10초) 순서로 진행되므로
-// 최악의 경우 이 정도 시간이 걸릴 수 있다고 보고 예산을 잡습니다.
-const NOTION_STAGE_CLAUDE_TIMEOUT_MS = 18000;
-const NOTION_STAGE_ESTIMATED_MS = NOTION_STAGE_CLAUDE_TIMEOUT_MS + 10000 + 2000; // +2초 여유
+// 남고 실제로 데이터가 저장됐는지 헷갈리게 됩니다.
+//
+// ⚠️ 2026-08-19 실측: 셋을 전부 18초로 맞췄더니 시장 섹션(generateMarketSection,
+// max_tokens 4096으로 셋 중 출력이 가장 큼)이 18초 안에 못 끝나서 "Notion 업데이트
+// 실패" 에러로 이어지는 게 실제로 확인됐습니다(노션은 이 3개가 전부 성공해야 완전한
+// 노트가 되므로, 시장 섹션 하나만 실패해도 전체가 실패 처리됨). 출력 크기가 작은
+// 나머지 둘(공시 요약 800·종목 이슈 1000 토큰)은 18초로 두고, 시장 섹션만 28초로
+// 늘렸습니다.
+const NOTION_DISCLOSURE_SUMMARY_TIMEOUT_MS = 18000;
+const NOTION_MARKET_SECTION_TIMEOUT_MS = 28000;
+const NOTION_STOCK_NEWS_TIMEOUT_MS = 18000;
+// 노션 단계의 3개 호출은 병렬(Promise.allSettled)로 도니, 예산은 셋 중 가장 긴
+// 타임아웃(=최악의 경우 실제로 기다릴 수 있는 최대 시간) 기준으로 잡아야 합니다.
+const NOTION_STAGE_ESTIMATED_MS =
+  Math.max(NOTION_DISCLOSURE_SUMMARY_TIMEOUT_MS, NOTION_MARKET_SECTION_TIMEOUT_MS, NOTION_STOCK_NEWS_TIMEOUT_MS)
+  + 10000 + 2000; // notionInsertBlocks(10초) + 2초 여유
 
 async function redisSet(key, valueObj) {
   const res = await fetchWithTimeout(`${UPSTASH_URL}/set/${encodeURIComponent(key)}`, {
@@ -921,7 +932,7 @@ ${listText}
       max_tokens: 800,
       messages: [{ role: "user", content: prompt }],
     }),
-  }, NOTION_STAGE_CLAUDE_TIMEOUT_MS);
+  }, NOTION_DISCLOSURE_SUMMARY_TIMEOUT_MS);
   if (!res.ok) throw new Error(`Anthropic API 오류 (공시 요약, ${res.status}): ${await res.text().catch(() => "")}`);
   const json = await res.json();
   const textBlock = (json.content || []).find((c) => c.type === "text");
@@ -1286,7 +1297,7 @@ ${formatSourcesBlock(usSources)}
       max_tokens: 4096, // 짧게 쓰라는 지시는 프롬프트로, 이 값은 잘림 방지용 여유분입니다
       messages: [{ role: "user", content: prompt }],
     }),
-  }, NOTION_STAGE_CLAUDE_TIMEOUT_MS);
+  }, NOTION_MARKET_SECTION_TIMEOUT_MS);
   if (!res.ok) throw new Error(`Anthropic API 오류 (시장 섹션, ${res.status}): ${await res.text().catch(() => "")}`);
   const json = await res.json();
   const textBlock = (json.content || []).find((c) => c.type === "text");
@@ -1336,7 +1347,7 @@ ${formatSourcesBlock(usSources)}
       max_tokens: 1000,
       messages: [{ role: "user", content: prompt }],
     }),
-  }, NOTION_STAGE_CLAUDE_TIMEOUT_MS);
+  }, NOTION_STOCK_NEWS_TIMEOUT_MS);
   if (!res.ok) throw new Error(`Anthropic API 오류 (종목 이슈, ${res.status}): ${await res.text().catch(() => "")}`);
   const json = await res.json();
   const textBlock = (json.content || []).find((c) => c.type === "text");
