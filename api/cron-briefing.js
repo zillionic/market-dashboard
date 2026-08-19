@@ -74,11 +74,16 @@ const FUNCTION_MAX_DURATION_MS = 60000;
 const NOTION_DISCLOSURE_SUMMARY_TIMEOUT_MS = 18000;
 const NOTION_MARKET_SECTION_TIMEOUT_MS = 28000;
 const NOTION_STOCK_NEWS_TIMEOUT_MS = 18000;
-// 노션 단계의 3개 호출은 병렬(Promise.allSettled)로 도니, 예산은 셋 중 가장 긴
-// 타임아웃(=최악의 경우 실제로 기다릴 수 있는 최대 시간) 기준으로 잡아야 합니다.
-const NOTION_STAGE_ESTIMATED_MS =
-  Math.max(NOTION_DISCLOSURE_SUMMARY_TIMEOUT_MS, NOTION_MARKET_SECTION_TIMEOUT_MS, NOTION_STOCK_NEWS_TIMEOUT_MS)
-  + 10000 + 2000; // notionInsertBlocks(10초) + 2초 여유
+
+// ⚠️ 2026-08-19: 처음엔 이 값을 "셋 중 가장 긴 개별 타임아웃(28초) + notionInsertBlocks
+// (10초)"로 계산했는데(=40초), 실제로 24655ms 경과 시점에 이미 "위험하다"고 판단해서
+// 건너뛰는 일이 있었습니다. 개별 타임아웃은 "비정상적으로 느릴 때 강제로 끊는 상한선"이지
+// "평소에 실제로 걸리는 시간"이 아닌데, 이 값을 그대로 예산에 써서 지나치게 보수적으로
+// 건너뛰고 있었던 것입니다(정상 소요 20~25초짜리 실행도 위험하다고 오판). 3개 Claude
+// 호출이 보통 상한까지 다 채우지 않고 그보다 훨씬 빨리 끝난다는 점을 반영해서, 평소
+// 실제로 걸리는 시간에 가까운 값으로 낮췄습니다 — 그래도 진짜로 많이 지연된 실행
+// (elapsed 35초 이상)에서는 여전히 건너뛰어서 최소한의 안전판 역할은 유지합니다.
+const NOTION_STAGE_ESTIMATED_MS = 25000;
 
 async function redisSet(key, valueObj) {
   const res = await fetchWithTimeout(`${UPSTASH_URL}/set/${encodeURIComponent(key)}`, {
