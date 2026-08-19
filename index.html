@@ -1815,7 +1815,13 @@
     }
 
     const values = history.map(h => h.close);
-    const dates = history.map(h => h.date.length === 10 ? h.date.slice(5).replace('-', '.') : h.date); // "YYYY-MM-DD" -> "MM.DD"
+    // "YYYY-MM-DD" -> "M.D" — 대시보드 다른 곳(formatShortKoreanDate 등)과 마찬가지로
+    // 월·일 앞자리 0은 붙이지 않습니다(일관성).
+    const dates = history.map(h => {
+      if (h.date.length !== 10) return h.date;
+      const [, m, d] = h.date.split("-");
+      return `${Number(m)}.${Number(d)}`;
+    });
     const W = 600, H = 88, padTop = 14, padBottom = 20, padX = 4;
     const plotH = H - padTop - padBottom;
     const n = values.length;
