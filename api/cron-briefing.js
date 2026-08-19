@@ -280,7 +280,14 @@ async function fetchMacroCalendar() {
     `&realtime_start=${realtimeStart}&realtime_end=${realtimeEnd}` +
     `&include_release_dates_with_no_data=true&sort_order=asc&limit=1000`;
 
-  const res = await fetchWithTimeout(url, {}, 10000);
+  // ⚠️ 2026-08-19 ?debugMacro=1로 실제 확인: 이 호출(전체 release 300여 개를 훑어
+  // include_release_dates_with_no_data=true·limit=1000으로 한 주치 조회하는 무거운
+  // 쿼리)이 10초 안에 안 끝나서 타임아웃 → fetchMacroCalendar() 전체가 실패해서
+  // 그날 매크로 캘린더 전체가 갱신 안 되고 이전 캐시(오래된 데이터)가 계속 남아있던
+  // 문제가 있었습니다. FRED releases/dates가 이 쿼리 형태에서 종종 10초를 넘기는
+  // 것으로 보여 여유를 뒀습니다 — 개별 발표치 조회(fetchFredObservations, 아래)는
+  // 훨씬 가벼운 쿼리라 10초 그대로 둡니다.
+  const res = await fetchWithTimeout(url, {}, 20000);
   if (!res.ok) throw new Error(`FRED API 오류 (${res.status}): ${await res.text().catch(() => "")}`);
   const json = await res.json();
   const rows = json.release_dates || [];
