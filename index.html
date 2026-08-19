@@ -856,10 +856,36 @@
       return null;
     }
   }
+  // 오늘(KST) 날짜를 KRX basDd 형식("YYYYMMDD")으로.
+  function todayKstCompact(){
+    return new Date().toLocaleDateString("en-CA", { timeZone: "Asia/Seoul" }).replace(/-/g, "");
+  }
+
+  // Yahoo Finance가 코스닥(^KQ11) 전일 종가(chartPreviousClose)를 며칠 전 값으로
+  // 잘못 주는 경우가 실제로 확인돼서(2026-08-19, 네이버 시세와 대조해 발견 —
+  // 코스피는 두 소스의 역산 전일종가가 정확히 일치했는데 코스닥만 30포인트 넘게
+  // 어긋났음), 전일 종가는 더 이상 Yahoo를 믿지 않고 거래소(KRX) API 응답에서
+  // 구해서 DATA.kr._prevClose에 저장해둡니다. applyKrIndices()가 이 값과 Yahoo의
+  // 실시간 현재가를 조합해서 변동폭·변동률을 직접 계산합니다.
+  //   - KRX가 이미 오늘자 데이터를 발표했으면(basDd===오늘) composite.change로
+  //     전일 종가를 거꾸로 풀어서 구함 (close - change)
+  //   - 아직 오늘자가 안 나왔으면(장중) composite.close 자체가 이미 "가장 최근
+  //     마감된 거래일"의 종가 = 우리가 원하는 전일 종가
+  function krPrevCloseFromComposite(json){
+    if (!json || !json.composite || !Number.isFinite(json.composite.close)) return null;
+    const c = json.composite;
+    if (json.basDd === todayKstCompact() && Number.isFinite(c.change)) return c.close - c.change;
+    return c.close;
+  }
+
   function applyKrMarket(result){
     if(!result) return { krBasDd: null };
     const { kospiJson, kosdaqJson } = result;
     const krBasDd = kospiJson.basDd;
+
+    DATA.kr._prevClose = DATA.kr._prevClose || {};
+    DATA.kr._prevClose.KOSPI = krPrevCloseFromComposite(kospiJson) ?? DATA.kr._prevClose.KOSPI ?? null;
+    DATA.kr._prevClose.KOSDAQ = krPrevCloseFromComposite(kosdaqJson) ?? DATA.kr._prevClose.KOSDAQ ?? null;
 
     // 코스피/코스닥 지수 카드 + 상단 티커 갱신
     if (kospiJson.composite) {
@@ -980,7 +1006,17 @@
     rows.forEach(({ key, name, idx }) => {
       const r = json[key];
       if (!r || !Number.isFinite(r.close) || !Number.isFinite(r.pct)) return;
-      const d = fmtDelta(r.change ?? 0, r.pct, { up: "up-kr", down: "down-kr" });
+      // 실시간 현재가는 Yahoo, 전일 종가는 거래소(KRX) API 기준으로 변동폭·변동률을
+      // 다시 계산합니다(krPrevCloseFromComposite 주석 참고 — Yahoo의 전일 종가
+      // 필드를 그대로 쓰면 코스닥에서 틀린 값이 나오는 게 확인됨). KRX 쪽 전일
+      // 종가를 아직 못 구했으면(최초 로드 실패 등) Yahoo 자체 값으로 폴백합니다.
+      const krPrevClose = DATA.kr._prevClose?.[name];
+      let change = r.change ?? 0, pct = r.pct;
+      if (Number.isFinite(krPrevClose) && krPrevClose > 0) {
+        change = r.close - krPrevClose;
+        pct = (change / krPrevClose) * 100;
+      }
+      const d = fmtDelta(change, pct, { up: "up-kr", down: "down-kr" });
       DATA.kr.indices[idx] = { name, value: fmtNum(r.close), delta: d.long, cls: d.cls };
       const t = DATA.ticker.find(t => t.name === name);
       if (t) { t.value = fmtNum(r.close); t.delta = d.long; t.cls = d.cls; }
