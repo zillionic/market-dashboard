@@ -284,30 +284,12 @@ function formatFredValue(value, displayFormat) {
   return String(value);
 }
 
-async function fetchMacroCalendar() {
-  if (!FRED_API_KEY) return [];
-
-  // 지난 영업일(전일, 주말이면 그 전 금요일)부터 오늘+5일까지 — 아침에 전일 발표 확인 +
-  // 앞으로 한 주 확인을 둘 다 할 수 있게 합니다.
-  const realtimeStart = previousBusinessDayStr();
-  const todayStr = nyDateStr(0);
-  const realtimeEnd = nyDateStr(5);
-  const url = `https://api.stlouisfed.org/fred/releases/dates?api_key=${FRED_API_KEY}&file_type=json` +
-    `&realtime_start=${realtimeStart}&realtime_end=${realtimeEnd}` +
-    `&include_release_dates_with_no_data=true&sort_order=asc&limit=1000`;
-
-  // ⚠️ 2026-08-19 ?debugMacro=1로 실제 확인: 이 호출(전체 release 300여 개를 훑어
-  // include_release_dates_with_no_data=true·limit=1000으로 한 주치 조회하는 무거운
-  // 쿼리)이 10초 안에 안 끝나서 타임아웃 → fetchMacroCalendar() 전체가 실패해서
-  // 그날 매크로 캘린더 전체가 갱신 안 되고 이전 캐시(오래된 데이터)가 계속 남아있던
-  // 문제가 있었습니다. FRED releases/dates가 이 쿼리 형태에서 종종 10초를 넘기는
-  // 것으로 보여 여유를 뒀습니다 — 개별 발표치 조회(fetchFredObservations, 아래)는
-  // 훨씬 가벼운 쿼리라 10초 그대로 둡니다.
-  const res = await fetchWithTimeout(url, {}, 20000);
-  if (!res.ok) throw new Error(`FRED API 오류 (${res.status}): ${await res.text().catch(() => "")}`);
-  const json = await res.json();
-  const rows = json.release_dates || [];
-
+// FRED releases/dates 원본 목록을 (1) 우리가 추적하는 키워드와 매칭 → (2) 같은
+// 날짜+원문명 중복 제거 → (3) "7일 창에 같은 release가 두 번 이상 뜨면 H.15류로
+// 보고 통째로 제외"하는 안전장치, 순서로 거릅니다. 이 세 단계를 fetchMacroCalendar()
+// (최종 결과만 필요)와 ?debugMacroRaw=1 진단(각 단계 결과를 다 보여줘서 "정말
+// 발표가 없는 건지 vs 안전장치가 실수로 지운 건지" 구분) 양쪽에서 재사용합니다.
+function matchAndFilterMacroReleases(rows) {
   // 원문 release_name으로 keyword를 찾아서, 필터 통과 여부와 한글 표시명(ko)을 동시에 얻습니다.
   const matched = rows
     .map((r) => {
@@ -335,6 +317,36 @@ async function fetchMacroCalendar() {
   const rawCounts = {};
   deduped.forEach((e) => { rawCounts[e.rawName] = (rawCounts[e.rawName] || 0) + 1; });
   const filtered = deduped.filter((e) => rawCounts[e.rawName] === 1);
+  const droppedBySafetyFilter = deduped.filter((e) => rawCounts[e.rawName] > 1);
+
+  return { matched, deduped, filtered, droppedBySafetyFilter };
+}
+
+async function fetchMacroCalendar() {
+  if (!FRED_API_KEY) return [];
+
+  // 지난 영업일(전일, 주말이면 그 전 금요일)부터 오늘+5일까지 — 아침에 전일 발표 확인 +
+  // 앞으로 한 주 확인을 둘 다 할 수 있게 합니다.
+  const realtimeStart = previousBusinessDayStr();
+  const todayStr = nyDateStr(0);
+  const realtimeEnd = nyDateStr(5);
+  const url = `https://api.stlouisfed.org/fred/releases/dates?api_key=${FRED_API_KEY}&file_type=json` +
+    `&realtime_start=${realtimeStart}&realtime_end=${realtimeEnd}` +
+    `&include_release_dates_with_no_data=true&sort_order=asc&limit=1000`;
+
+  // ⚠️ 2026-08-19 ?debugMacro=1로 실제 확인: 이 호출(전체 release 300여 개를 훑어
+  // include_release_dates_with_no_data=true·limit=1000으로 한 주치 조회하는 무거운
+  // 쿼리)이 10초 안에 안 끝나서 타임아웃 → fetchMacroCalendar() 전체가 실패해서
+  // 그날 매크로 캘린더 전체가 갱신 안 되고 이전 캐시(오래된 데이터)가 계속 남아있던
+  // 문제가 있었습니다. FRED releases/dates가 이 쿼리 형태에서 종종 10초를 넘기는
+  // 것으로 보여 여유를 뒀습니다 — 개별 발표치 조회(fetchFredObservations, 아래)는
+  // 훨씬 가벼운 쿼리라 10초 그대로 둡니다.
+  const res = await fetchWithTimeout(url, {}, 20000);
+  if (!res.ok) throw new Error(`FRED API 오류 (${res.status}): ${await res.text().catch(() => "")}`);
+  const json = await res.json();
+  const rows = json.release_dates || [];
+
+  const { filtered } = matchAndFilterMacroReleases(rows);
 
   // 오늘 이전(전일 포함) 이벤트는 "이미 발표됐을 수 있다"고 보고 FRED에서 발표치·직전치를
   // 같이 가져옵니다 (창이 지난 영업일부터 시작하니 오늘 하루만 볼 게 아니라 과거로 걸린 날짜
@@ -1555,6 +1567,42 @@ module.exports = async function handler(req, res) {
         saved = true;
       }
       res.status(200).json({ hasApiKey: !!FRED_API_KEY, saved, events });
+    } catch (err) {
+      res.status(500).json({ error: String(err) });
+    }
+    return;
+  }
+
+  // 진단용: ?debugMacroRaw=1 로 호출하면 "정말 이번 주 발표가 없는 건지 vs 안전장치
+  // (같은 release가 7일 창에 두 번 이상 뜨면 통째로 제외)가 실수로 지운 건지"를
+  // 구분할 수 있게, 필터링 각 단계 결과를 전부 보여줍니다(2026-08-19, 산업생산 딱
+  // 하나만 뜨는 게 정상인지 확인하다가 추가). Claude 호출 없음, 비용 없음.
+  //   matched: 우리 키워드(MACRO_RELEASES)와 매칭된 전부 (dedup 전)
+  //   deduped: 같은 날짜+원문명 중복 제거 후
+  //   droppedBySafetyFilter: 안전장치에 걸려 최종 결과에서 빠진 것들 — 여기 뭔가
+  //     있으면 실제 발표가 있는데 필터가 잘못 지운 것일 수 있음
+  if (req.query.debugMacroRaw) {
+    if (!FRED_API_KEY) { res.status(200).json({ hasApiKey: false }); return; }
+    try {
+      const realtimeStart = previousBusinessDayStr();
+      const realtimeEnd = nyDateStr(5);
+      const url = `https://api.stlouisfed.org/fred/releases/dates?api_key=${FRED_API_KEY}&file_type=json` +
+        `&realtime_start=${realtimeStart}&realtime_end=${realtimeEnd}` +
+        `&include_release_dates_with_no_data=true&sort_order=asc&limit=1000`;
+      const rawRes = await fetchWithTimeout(url, {}, 20000);
+      if (!rawRes.ok) throw new Error(`FRED API 오류 (${rawRes.status}): ${await rawRes.text().catch(() => "")}`);
+      const rawJson = await rawRes.json();
+      const rows = rawJson.release_dates || [];
+      const { matched, deduped, filtered, droppedBySafetyFilter } = matchAndFilterMacroReleases(rows);
+      res.status(200).json({
+        hasApiKey: true,
+        window: { realtimeStart, realtimeEnd },
+        totalReleaseDatesFromFred: rows.length,
+        matched,
+        dedupedCount: deduped.length,
+        finalCount: filtered.length,
+        droppedBySafetyFilter,
+      });
     } catch (err) {
       res.status(500).json({ error: String(err) });
     }
