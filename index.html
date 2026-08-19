@@ -1539,7 +1539,7 @@
         const hasEst = Number.isFinite(e.epsEstimate);
         const cls = hasEst ? (e.epsActual >= e.epsEstimate ? "beat" : "miss") : "";
         const estStr = hasEst ? ` (예상 $${e.epsEstimate.toFixed(2)})` : "";
-        epsHtml = `<span class="label">EPS 실적</span><span class="val ${cls}">$${e.epsActual.toFixed(2)}${estStr}</span>`;
+        epsHtml = `<span class="val ${cls}">$${e.epsActual.toFixed(2)}${estStr}</span>`;
       } else if(Number.isFinite(e.epsEstimate)){
         epsHtml = `<span class="label">발표 예정</span><span class="val pending">예상 $${e.epsEstimate.toFixed(2)}</span>`;
       } else {
